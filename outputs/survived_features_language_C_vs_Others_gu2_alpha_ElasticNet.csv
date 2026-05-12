@@ -1,0 +1,17 @@
+task,condition,band,model,feature,survival_count,mean_coefficient,median_coefficient,mean_abs_coefficient,max_abs_coefficient,n_folds,survival_rate,direction,feature_band,channel_1,channel_2,channel_pair
+language_C_vs_Others,gu2,alpha,ElasticNet,alpha_ACaR_OpM,5,-0.6626965218848041,-0.6640428639555123,0.6626965218848041,0.8087837456378414,5,1.0,towards_Others,alpha,ACaR,OpM,ACaR-OpM
+language_C_vs_Others,gu2,alpha,ElasticNet,alpha_FM_PM,5,0.4700590890628319,0.40847057930448705,0.4700590890628319,0.6179992482791196,5,1.0,towards_C,alpha,FM,PM,FM-PM
+language_C_vs_Others,gu2,alpha,ElasticNet,alpha_FM_CM,5,0.46302845791787944,0.4844420741470709,0.46302845791787944,0.7346296627248513,5,1.0,towards_C,alpha,FM,CM,FM-CM
+language_C_vs_Others,gu2,alpha,ElasticNet,alpha_PR_CM,5,0.41797975784364694,0.3019355381307629,0.41797975784364694,0.8689613138099301,5,1.0,towards_C,alpha,PR,CM,PR-CM
+language_C_vs_Others,gu2,alpha,ElasticNet,alpha_FL_FR,5,-0.4071479779762061,-0.45555263159568715,0.4071479779762061,0.46890302359789937,5,1.0,towards_Others,alpha,FL,FR,FL-FR
+language_C_vs_Others,gu2,alpha,ElasticNet,alpha_FM_OpM,5,0.3848191781770448,0.3336185759972241,0.3848191781770448,0.5318818547381876,5,1.0,towards_C,alpha,FM,OpM,FM-OpM
+language_C_vs_Others,gu2,alpha,ElasticNet,alpha_ACaR_FL,5,-0.3756219085520068,-0.4137460214330939,0.3756219085520068,0.6029098766740965,5,1.0,towards_Others,alpha,ACaR,FL,ACaR-FL
+language_C_vs_Others,gu2,alpha,ElasticNet,alpha_ACaR_PM,5,-0.35145724243039783,-0.4199255856341316,0.35145724243039783,0.6510594320082763,5,1.0,towards_Others,alpha,ACaR,PM,ACaR-PM
+language_C_vs_Others,gu2,alpha,ElasticNet,alpha_FR_OpM,5,-0.31914248302525466,-0.35734915850747057,0.31914248302525466,0.5117619598088767,5,1.0,towards_Others,alpha,FR,OpM,FR-OpM
+language_C_vs_Others,gu2,alpha,ElasticNet,alpha_ACaR_FR,5,-0.29102800336779855,-0.24122378950291318,0.29102800336779855,0.5125238436491839,5,1.0,towards_Others,alpha,ACaR,FR,ACaR-FR
+language_C_vs_Others,gu2,alpha,ElasticNet,alpha_ACtR_PM,5,-0.2349723095555601,-0.27466018262587116,0.2349723095555601,0.3564152618831888,5,1.0,towards_Others,alpha,ACtR,PM,ACtR-PM
+language_C_vs_Others,gu2,alpha,ElasticNet,alpha_ACaL_FpM,5,0.15913879937302697,0.13915050346062804,0.15913879937302697,0.31314497109130807,5,1.0,towards_C,alpha,ACaL,FpM,ACaL-FpM
+language_C_vs_Others,gu2,alpha,ElasticNet,alpha_ACrR_ACaR,4,-0.36858836542948037,-0.42438924148476276,0.36858836542948037,0.6474354922344243,5,0.8,towards_Others,alpha,ACrR,ACaR,ACrR-ACaR
+language_C_vs_Others,gu2,alpha,ElasticNet,alpha_ACaR_PL,4,-0.16892744462411216,-0.19431717590718833,0.16892744462411216,0.2686480277999465,5,0.8,towards_Others,alpha,ACaR,PL,ACaR-PL
+language_C_vs_Others,gu2,alpha,ElasticNet,alpha_PR_FM,4,0.14328475878831,0.2154878464083884,0.14328475878831,0.24814959154103122,5,0.8,towards_C,alpha,PR,FM,PR-FM
+language_C_vs_Others,gu2,alpha,ElasticNet,alpha_CM_PM,4,0.09126722320233494,0.02191754449057274,0.09126722320233494,0.29457197362077564,5,0.8,towards_C,alpha,CM,PM,CM-PM
