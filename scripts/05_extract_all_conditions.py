@@ -9,16 +9,29 @@ import pandas as pd
 # ============================================================
 
 BASE_DIR = Path(__file__).resolve().parent
+if BASE_DIR.name == "scripts":
+    BASE_DIR = BASE_DIR.parent
 DATA_DIR = BASE_DIR / "data"
-META_PATH = BASE_DIR / "meta" / "R16 Participant information.xlsx"
 OUTPUT_DIR = BASE_DIR / "outputs"
 OUTPUT_DIR.mkdir(exist_ok=True)
+base_path = Path(DATA_DIR).expanduser()
 
 print("BASE_DIR:", BASE_DIR)
 print("DATA_DIR:", DATA_DIR)
-print("META_PATH:", META_PATH)
 print("OUTPUT_DIR:", OUTPUT_DIR)
 
+data_channels = ["ACtL", "ACrL", "ACaL", "ACtR", "ACrR", "ACaR"]
+n_ch_used = len(data_channels)
+
+
+freq_bands = {
+        "delta": (2, 4),
+        "theta": (4, 8),
+        "alpha": (8, 12),
+        "beta": (12, 25),
+        "highbeta": (25, 30),
+        "gamma": (30, 50),
+    }
 
 # ============================================================
 # 2. Helper functions for .conn files
@@ -31,6 +44,8 @@ def parse_conn_header(text):
         "FreqStartInHz": r"FreqStartInHz=([0-9.]+)",
         "FreqIntervalInHz": r"FreqIntervalInHz=([0-9.]+)",
         "NumberChannels": r"NumberChannels=(\d+)",
+        "TimeStartInMS": r"TimeStartInMS=(-?[0-9.]+)",
+        "IntervalInMS": r"IntervalInMS=([0-9.]+)",                
     }
 
     header = {}
@@ -71,12 +86,10 @@ def extract_numeric_data_after_channels(text):
     data_text = "\n".join(lines[data_start_idx:])
     numbers = re.findall(r"[-+]?\d*\.\d+|[-+]?\d+", data_text)
     values = np.array(numbers, dtype=float)
-
     return values
 
-
 def extract_participant_id(filename):
-    return filename.split("_")[0]
+    return filename.split("_")[0].upper()
 
 
 def make_canonical_id(pid):
@@ -123,13 +136,20 @@ def read_conn_file_to_features(conn_path, condition_name):
     header = parse_conn_header(text)
     values = extract_numeric_data_after_channels(text)
 
-    n_time = header["NumberTimeSamples"]
-    n_freq = header["NumberFrequencies"]
-    n_ch = header["NumberChannels"]
+    n_time = header["NumberTimeSamples"] # 31
+    n_freq = header["NumberFrequencies"] # 49
+    n_ch = header["NumberChannels"] # 15
+    time_start = header["TimeStartInMS"] # -500
+    interval = header["IntervalInMS"] # 50
+
+    time_start_used = 0
+    time_end_used = 800
+
+    n_time_start_used = int((time_start_used - time_start) / interval)
+    n_time_end_used = int((time_end_used - time_start) / interval)
 
     expected_4d = n_time * n_freq * n_ch * n_ch
     expected_3d = n_freq * n_ch * n_ch
-
     if len(values) == expected_4d:
         data_4d = values.reshape(n_time, n_freq, n_ch, n_ch)
     elif len(values) == expected_3d:
@@ -140,129 +160,124 @@ def read_conn_file_to_features(conn_path, condition_name):
             f"Got {len(values)}, expected {expected_4d} or {expected_3d}"
         )
 
-    # Average across time samples
-    data_freq_ch_ch = data_4d.mean(axis=0)
+    # truncate time frame from 31 (-500 - 1000ms) to 17 (0 - 800ms), and channels to first 6 x 6
+    data_4d_trunc = data_4d[n_time_start_used:n_time_end_used+1, :, :n_ch_used, :n_ch_used]
+    # Average across time sam`p`les
+    data_freq_ch_ch = data_4d_trunc.mean(axis=0)
 
     # Frequency list
     freqs = (
         header["FreqStartInHz"]
         + np.arange(header["NumberFrequencies"]) * header["FreqIntervalInHz"]
-    )
-
-    bands = {
-        "delta": (2, 4),
-        "theta": (4, 8),
-        "alpha": (8, 12),
-        "beta": (12, 25),
-        "highbeta": (25, 30),
-        "gamma": (30, 40),
-    }
-
+    )    
     band_matrices = {}
-
-    for band_name, (low, high) in bands.items():
+    for band_name, (low, high) in freq_bands.items():
         idx = np.where((freqs >= low) & (freqs <= high))[0]
         band_matrices[band_name] = data_freq_ch_ch[idx].mean(axis=0)
-
-    features = extract_upper_triangle_features(band_matrices, header["channels"])
+    features = extract_upper_triangle_features(band_matrices, header["channels"][:n_ch_used])
 
     participant_id = extract_participant_id(conn_path.name)
-
     row = {
         "participant_id": participant_id,
-        "canonical_id": make_canonical_id(participant_id),
         "filename": conn_path.name,
         "condition": condition_name,
     }
+
     row.update(features)
+    
+    # alternatively, keep the time dimension to explore best window
+    # for t_idx in range(n_time_end_used+1-n_time_start_used):
+    #     ms = t_idx * 50  # Index 10 is 0ms (stimulus onset) [8]        
+    #     coherence_at_t = data_4d_trunc[t_idx, :, :, :]
+    #     band_matrices = {}
+    #     for band_name, (low, high) in freq_bands.items():
+    #         idx = np.where((freqs >= low) & (freqs <= high))[0]
+    #         band_matrices[band_name] = coherence_at_t[idx].mean(axis=0)
+    #     features = extract_upper_triangle_features(band_matrices, header["channels"][:n_ch_used])
+    #     suffix_features = {f"{key}_{ms}ms":value for key, value in features.items()}
+    #     row.update(suffix_features)
 
     return row
 
 
 # ============================================================
-# 3. Prepare metadata
+# 3. Prepare metadata from conn file paths
 # ============================================================
 
-meta_raw = pd.read_excel(META_PATH)
-
-metadata_clean = meta_raw.copy()
-
-metadata_clean = metadata_clean.rename(columns={
-    "Participant ID": "participant_id",
-    "DOE/date of test": "date_of_test",
-    "Language background": "language_background",
-    "Music background": "music_background",
-})
-
-metadata_clean = metadata_clean[
-    [
-        "participant_id",
-        "lang",
-        "DOB",
-        "date_of_test",
-        "language_background",
-        "music_background",
-        "Toni raw",
-        "Toni SS",
-        "PPVT raw",
-        "PPVT ss",
-        "TVIP raw",
-        "TVIP ss",
-    ]
-].copy()
-
-metadata_clean["participant_id"] = metadata_clean["participant_id"].astype(str).str.strip()
-metadata_clean["lang"] = metadata_clean["lang"].astype(str).str.strip()
-metadata_clean["lang"] = metadata_clean["lang"].replace(["nan", "NaN", "None", ""], np.nan)
-
-metadata_clean["DOB"] = pd.to_datetime(metadata_clean["DOB"], errors="coerce")
-metadata_clean["date_of_test"] = pd.to_datetime(metadata_clean["date_of_test"], errors="coerce")
-
-metadata_clean["age"] = (
-    (metadata_clean["date_of_test"] - metadata_clean["DOB"]).dt.days / 365.25
-)
-
-def make_age_group(age):
-    if pd.isna(age):
-        return np.nan
-    elif 5 <= age <= 7:
-        return "5-7"
-    elif 8 <= age <= 12:
-        return "8-12"
-    elif 13 <= age <= 19:
-        return "Teens"
+def extract_group_info(directory_name):
+    """
+    Parses the directory name and returns a tuple of (language, age_group).
+    """
+    dir_lower = directory_name.lower()
+    
+    if 'eng' in dir_lower or 'ees' in dir_lower:
+        language = 'English'
+    elif 'man' in dir_lower or 'mms' in dir_lower:
+        language = 'Mandarin'
     else:
-        return "Other"
+        language = 'Unknown'
+        
+    if '5_7' in dir_lower:
+        age_group = '5-7'
+    elif '8_11' in dir_lower:
+        age_group = '8-12'
+    elif 'teen' in dir_lower:
+        age_group = 'Teen'
+    elif 'adult' in dir_lower:
+        age_group = 'Adult'
+    else:
+        age_group = 'Unknown'
+        
+    return language, age_group
 
-metadata_clean["age_group"] = metadata_clean["age"].apply(make_age_group)
+def read_meta_data_from_conn_file(conn_path):
+    relative_path = conn_path.relative_to(base_path)
+    parts = relative_path.parts
+    
+    # pattern is: <Group_Dir> / Coherence / Complex Demodulation / <Stimulus_Dir> / <Filename>
+    # eg. ('2026-08-18_eng_children_5_7yrs_connect', 'Coherence', 'Complex Demodulation', 'gu1', 'R16C99b8.conn')
+    group_dir = parts[0]
+    stimulus_dir = parts[3]
+    filename = parts[4]
 
-metadata_clean["lang_binary"] = metadata_clean["lang"].apply(
-    lambda x: "C" if x == "C" else ("Others" if pd.notna(x) else np.nan)
-)
+    # print(f"Directory: {group_dir}")
+    # print(f"Stimulus:  {stimulus_dir}")
+    # print(f"Filename:  {filename}")
+    # print("-" * 40)
+    
+    lang, age_group = extract_group_info(group_dir)
+    
+    row = {
+        "participant_id": extract_participant_id(conn_path.name),
+        "lang": lang,
+        "age_group": age_group,
+        "file_name": filename
+    }
 
-metadata_clean["exact_id"] = metadata_clean["participant_id"].astype(str).str.strip().str.upper()
-metadata_clean["canonical_id"] = metadata_clean["participant_id"].apply(make_canonical_id)
-metadata_clean["is_base_id"] = metadata_clean["exact_id"] == metadata_clean["canonical_id"]
+    return row
 
-# Resolve duplicated canonical IDs by preferring base IDs
-metadata_sorted = metadata_clean.sort_values(
-    by=["canonical_id", "is_base_id"],
-    ascending=[True, False]
-)
+rows = []
+failed_files = []
 
-metadata_unique = metadata_sorted.drop_duplicates(
-    subset=["canonical_id"],
+search_pattern = "*/Coherence/Complex Demodulation/*/*.conn"
+conn_files = list(base_path.glob(search_pattern))
+for conn_path in conn_files:
+    try:
+        row = read_meta_data_from_conn_file(conn_path)
+        rows.append(row)
+    except Exception as e:
+        failed_files.append((conn_path.name, str(e)))
+
+X_meta_all = pd.DataFrame(rows)
+X_meta = X_meta_all.drop_duplicates(
+    subset=["participant_id"],
     keep="first"
 ).copy()
 
-metadata_clean.to_csv(OUTPUT_DIR / "metadata_clean_all_conditions.csv", index=False)
-metadata_unique.to_csv(OUTPUT_DIR / "metadata_unique_all_conditions.csv", index=False)
+X_meta.to_csv(OUTPUT_DIR / "metadata_unique_all_conditions.csv", index=False)
 
 print("\nMetadata prepared.")
-print("Raw metadata shape:", meta_raw.shape)
-print("Clean metadata shape:", metadata_clean.shape)
-print("Unique metadata shape:", metadata_unique.shape)
-
+print("Unique metadata shape:", X_meta.shape)
 
 # ============================================================
 # 4. Extract and merge each condition
@@ -271,27 +286,15 @@ print("Unique metadata shape:", metadata_unique.shape)
 conditions = ["gu1", "gu2", "gu3"]
 
 for condition in conditions:
-    condition_dir = DATA_DIR / condition
-
     print("\n" + "=" * 80)
     print("Processing condition:", condition)
-    print("Folder:", condition_dir)
-    print("Folder exists?", condition_dir.exists())
-
-    if not condition_dir.exists():
-        print(f"WARNING: folder not found: {condition_dir}")
-        continue
-
-    # Only use files whose filename contains _gu1_ / _gu2_ / _gu3_
-    conn_files = sorted([
-        f for f in condition_dir.glob("*.conn")
-        if f"_{condition}_" in f.name
-    ])
-
-    print(f"Number of valid {condition} .conn files:", len(conn_files))
 
     rows = []
     failed_files = []
+
+    search_pattern = f"*/Coherence/Complex Demodulation/{condition}/*.conn"
+    conn_files = list(base_path.glob(search_pattern))
+    print(f"Number of valid {condition} .conn files:", len(conn_files))
 
     for conn_path in conn_files:
         try:
@@ -317,8 +320,8 @@ for condition in conditions:
 
     # Merge metadata
     dataset = X_conn.merge(
-        metadata_unique.drop(columns=["exact_id"], errors="ignore"),
-        on="canonical_id",
+        X_meta,
+        on="participant_id",
         how="left",
         suffixes=("_conn", "_meta")
     )
@@ -332,19 +335,15 @@ for condition in conditions:
         & ~dataset["lang"].astype(str).str.lower().isin(["nan", "none", ""])
     ].copy()
 
-    dataset_lang["lang_binary"] = dataset_lang["lang"].apply(
-        lambda x: "C" if x == "C" else "Others"
-    )
-
     dataset_lang_path = OUTPUT_DIR / f"dataset_lang_{condition}.csv"
     dataset_lang.to_csv(dataset_lang_path, index=False)
 
-    # Age dataset: 5-7 vs 8-12 only
     dataset_age = dataset[
+        # dataset["age_group"].isin(["5-7", "8-12", "Teen", "Adult"])
         dataset["age_group"].isin(["5-7", "8-12"])
     ].copy()
 
-    dataset_age_path = OUTPUT_DIR / f"dataset_age_5-7_vs_8-12_{condition}.csv"
+    dataset_age_path = OUTPUT_DIR / f"dataset_age_{condition}.csv"
     dataset_age.to_csv(dataset_age_path, index=False)
 
     missing_meta = dataset[dataset["lang"].isna()]
@@ -359,9 +358,6 @@ for condition in conditions:
 
     print("\nLanguage counts:")
     print(dataset_lang["lang"].value_counts(dropna=False))
-
-    print("\nLanguage binary counts:")
-    print(dataset_lang["lang_binary"].value_counts(dropna=False))
 
     print("\nAge group counts:")
     print(dataset["age_group"].value_counts(dropna=False))

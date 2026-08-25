@@ -16,6 +16,8 @@ from sklearn.metrics import confusion_matrix, make_scorer
 # ============================================================
 
 BASE_DIR = Path(__file__).resolve().parent
+if BASE_DIR.name == "scripts":
+    BASE_DIR = BASE_DIR.parent
 OUTPUT_DIR = BASE_DIR / "outputs"
 
 dataset_path = OUTPUT_DIR / "dataset_gu3.csv"

@@ -11,6 +11,8 @@ import matplotlib.pyplot as plt
 # ============================================================
 
 BASE_DIR = Path(__file__).resolve().parent
+if BASE_DIR.name == "scripts":
+    BASE_DIR = BASE_DIR.parent
 OUTPUT_DIR = BASE_DIR / "outputs"
 FIG_DIR = OUTPUT_DIR / "figures"
 
@@ -228,12 +230,12 @@ plot_bandwise_task(
 )
 
 # Important: C vs S best result is Linear SVM, not ElasticNet
-plot_bandwise_task(
-    task_name="language_C_vs_S",
-    model_name="SVM_linear",
-    filename="04_bandwise_language_C_vs_S_auc_LinearSVM.png",
-    title="Band-wise AUC: Language C vs S (Linear SVM)"
-)
+# plot_bandwise_task(
+#     task_name="language_C_vs_S",
+#     model_name="SVM_linear",
+#     filename="04_bandwise_language_C_vs_S_auc_LinearSVM.png",
+#     title="Band-wise AUC: Language C vs S (Linear SVM)"
+# )
 
 
 # ============================================================
@@ -304,13 +306,13 @@ plot_permutation_histogram(
     clean_title="Permutation Test: Age 8–12 vs 5–7\ngu2 | alpha | Elastic Net"
 )
 
-plot_permutation_histogram(
-    task="language_C_vs_S",
-    condition="gu3",
-    band="delta",
-    model="SVM_linear",
-    clean_title="Permutation Test: Language C vs S\ngu3 | delta | Linear SVM"
-)
+# plot_permutation_histogram(
+#     task="language_C_vs_S",
+#     condition="gu3",
+#     band="delta",
+#     model="SVM_linear",
+#     clean_title="Permutation Test: Language C vs S\ngu3 | delta | Linear SVM"
+# )
 
 
 # ============================================================

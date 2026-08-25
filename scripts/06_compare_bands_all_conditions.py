@@ -18,8 +18,11 @@ from sklearn.metrics import confusion_matrix, make_scorer
 # ============================================================
 
 BASE_DIR = Path(__file__).resolve().parent
+if BASE_DIR.name == "scripts":
+    BASE_DIR = BASE_DIR.parent
 OUTPUT_DIR = BASE_DIR / "outputs"
 
+# conditions = ["gu1"]
 conditions = ["gu1", "gu2", "gu3"]
 
 print("BASE_DIR:", BASE_DIR)
@@ -237,21 +240,22 @@ for condition in conditions:
     print(df["age_group"].value_counts(dropna=False))
 
     # Task 1: Language C vs S
-    result_lang_cs = run_binary_task(
-        df=df,
-        condition=condition,
-        task_name="language_C_vs_S",
-        label_col="lang",
-        positive_label="C",
-        negative_label="S",
-        n_splits=5
-    )
-    all_results.append(result_lang_cs)
+    # result_lang_cs = run_binary_task(
+    #     df=df,
+    #     condition=condition,
+    #     task_name="language_C_vs_S",
+    #     label_col="lang",
+    #     positive_label="C",
+    #     negative_label="S",
+    #     n_splits=5
+    # )
+    # all_results.append(result_lang_cs)
 
     # Task 2: Language C vs Others
     df_lang = df[df["lang"].notna()].copy()
     df_lang["lang_binary_task"] = df_lang["lang"].apply(
-        lambda x: "C" if x == "C" else "Others"
+        # lambda x: "C" if x == "C" else "Others"
+        lambda x: "Mandarin" if x == "Mandarin" else "Others"
     )
 
     result_lang_c_others = run_binary_task(
@@ -259,7 +263,7 @@ for condition in conditions:
         condition=condition,
         task_name="language_C_vs_Others",
         label_col="lang_binary_task",
-        positive_label="C",
+        positive_label="Mandarin",
         negative_label="Others",
         n_splits=5
     )

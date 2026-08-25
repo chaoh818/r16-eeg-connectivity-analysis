@@ -16,6 +16,8 @@ from sklearn.linear_model import LogisticRegression
 # ============================================================
 
 BASE_DIR = Path(__file__).resolve().parent
+if BASE_DIR.name == "scripts":
+    BASE_DIR = BASE_DIR.parent
 OUTPUT_DIR = BASE_DIR / "outputs"
 
 RANDOM_STATE = 42
@@ -84,7 +86,7 @@ def prepare_binary_task(condition, task_name, label_col, positive_label, negativ
     if task_name == "language_C_vs_Others":
         df = df[df["lang"].notna()].copy()
         df["lang_binary_task"] = df["lang"].apply(
-            lambda x: "C" if x == "C" else "Others"
+            lambda x: "Mandarin" if x == "Mandarin" else "Others"
         )
         label_col = "lang_binary_task"
 
@@ -305,7 +307,7 @@ task_configs = [
         "condition": "gu2",
         "band": "alpha",
         "label_col": "lang_binary_task",
-        "positive_label": "C",
+        "positive_label": "Mandarin",
         "negative_label": "Others",
     },
     {

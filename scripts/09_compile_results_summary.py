@@ -10,6 +10,8 @@ from openpyxl.utils import get_column_letter
 # ============================================================
 
 BASE_DIR = Path(__file__).resolve().parent
+if BASE_DIR.name == "scripts":
+    BASE_DIR = BASE_DIR.parent
 OUTPUT_DIR = BASE_DIR / "outputs"
 
 summary_path = OUTPUT_DIR / "R16_EEG_analysis_summary.xlsx"
