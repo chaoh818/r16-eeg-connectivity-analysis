@@ -88,8 +88,12 @@ def extract_numeric_data_after_channels(text):
     values = np.array(numbers, dtype=float)
     return values
 
+
 def extract_participant_id(filename):
-    return filename.split("_")[0].upper()
+    parts = filename.split("_")[:-3]  # Exclude the last three parts
+    parts_string = "_".join(parts)
+    parts_string = parts_string.replace("_info1", "")
+    return parts_string.upper()
 
 
 def make_canonical_id(pid):
@@ -203,32 +207,99 @@ def read_conn_file_to_features(conn_path, condition_name):
 # ============================================================
 # 3. Prepare metadata from conn file paths
 # ============================================================
-
-def extract_group_info(directory_name):
+def extract_participant_info(participant_id, dir_name):
     """
-    Parses the directory name and returns a tuple of (language, age_group).
+    Extracts Language, Gender, and Age from a list of participant IDs.
+    Language is derived from project prefixes or the latter part of the string.
+    Gender (B, G, M, F) and Age (1-2 digits) are extracted from the end.
     """
-    dir_lower = directory_name.lower()
+    # --- 1. Extract Language (A, E, S, C) ---
+    lang = 'Unknown'
     
-    if 'eng' in dir_lower or 'ees' in dir_lower:
-        language = 'English'
-    elif 'man' in dir_lower or 'mms' in dir_lower:
-        language = 'Mandarin'
+    # Rule A: Adult groups (EES = English, MMS = Mandarin/Chinese)
+    if 'EES' in participant_id:
+        lang = 'E'
+    elif 'MMS' in participant_id or 'ME' in participant_id or 'KK' in participant_id or 'JY' in participant_id:
+        lang = 'C'
+    elif 'BF' in participant_id:
+        lang = 'S'
+    # Rule B: R16 Children's data (4th character is the language group)
+    elif participant_id.startswith('R16') and len(participant_id) > 3 and participant_id[3] in ['A', 'E', 'S', 'C']:
+        lang = participant_id[3]
     else:
-        language = 'Unknown'
+        # Rule C: Fallback to finding A, E, S, or C in the latter part of the string
+        # We search the string in reverse ([::-1]) to grab the last occurrence
+        lang_match = re.search(r'[AESC]', participant_id[::-1])
+        if lang_match:
+            lang = lang_match.group(0)
+    if lang == 'Unknown':
+        if '-E-' in dir_name:
+            lang = 'E'
+        elif '-C-' in dir_name:
+            lang = 'C'
+    
+    # --- 2. Extract Gender and Age ---
+    # Remove trailing non-age/gender suffixes that might interfere
+    pid_clean = re.sub(r'(INFO\d*|MIX|MU|A|GU)$', '', participant_id)
+    
+    # Matches Gender (M,B,F,G) and Age (1-2 digits) in either order
+    pattern = r'([MBFG|(BY)])[A-Z_]*(\d{1,2})(?!\d)|(\d{1,2})[A-Z_]*([MBFG|(BY)])(?!\d)'
+    matches = list(re.finditer(pattern, pid_clean))
+    
+    if matches:
+        last_match = matches[-1]
+        if last_match.group(1):
+            gender_char = last_match.group(1)
+            age = int(last_match.group(2))
+        else:
+            age = int(last_match.group(3))
+            gender_char = last_match.group(4)
         
-    if '5_7' in dir_lower:
-        age_group = '5-7'
-    elif '8_11' in dir_lower:
-        age_group = '8-12'
-    elif 'teen' in dir_lower:
-        age_group = 'Teen'
-    elif 'adult' in dir_lower:
-        age_group = 'Adult'
+        gender = 'Male' if gender_char in ['M', 'B', 'BY'] else 'Female'
     else:
-        age_group = 'Unknown'
-        
-    return language, age_group
+        gender = 'Unknown'
+        age = None
+
+    # special cases
+    if participant_id == 'R16L01SY06':
+        gender = 'Female'
+        age = 6
+    if participant_id == 'CSD499AH10F21':
+        lang = 'E'
+
+    return lang, gender, age
+
+
+def extract_age_group(age, dir_name):
+    age_group_orig = None
+    age_group_edu = None
+    if '-teen-' in dir_name:
+        age_group_orig = 'Teen'
+    elif '-adult-' in dir_name:
+        age_group_orig = 'Adult'
+    elif pd.isna(age):
+        age_group_orig = np.nan
+    elif age < 8:
+        age_group_orig = "5-7"
+    elif 8 <= age < 13:
+        age_group_orig = "8-12"
+    elif 13 <= age < 22:
+        age_group_orig = "Teen"
+    else:
+        age_group_orig = "Adult"
+
+    if pd.isna(age):
+        age_group_edu = np.nan
+    elif age < 12:
+        age_group_edu = "Elementary"
+    elif 12 <= age < 19:
+        age_group_edu = "Secondary"
+    elif 19 <= age < 23:
+        age_group_edu = "Tertiary"
+    else:
+        age_group_edu = "Adult"
+
+    return age_group_orig, age_group_edu
 
 def read_meta_data_from_conn_file(conn_path):
     relative_path = conn_path.relative_to(base_path)
@@ -245,12 +316,21 @@ def read_meta_data_from_conn_file(conn_path):
     # print(f"Filename:  {filename}")
     # print("-" * 40)
     
-    lang, age_group = extract_group_info(group_dir)
+    participant_id = extract_participant_id(conn_path.name)
+    lang, gender, age = extract_participant_info(participant_id, group_dir)
+    age_group_orig, age_group_edu = extract_age_group(age, group_dir)
+    lang_group = 'C' if lang == 'C' else 'NC'
+    age_lang_group = f"{age_group_orig}_{lang_group}" if age_group_orig and lang_group else None
     
     row = {
-        "participant_id": extract_participant_id(conn_path.name),
+        "participant_id": participant_id,
+        "gender": gender,
+        "age": age,
+        "age_group": age_group_orig,
+        "age_group_edu": age_group_edu,
         "lang": lang,
-        "age_group": age_group,
+        "lang_group": lang_group,
+        "age_lang_group": age_lang_group,
         "file_name": filename
     }
 
@@ -275,6 +355,9 @@ X_meta = X_meta_all.drop_duplicates(
 ).copy()
 
 X_meta.to_csv(OUTPUT_DIR / "metadata_unique_all_conditions.csv", index=False)
+
+# this reads meta file with manual updates
+# X_meta = pd.read_csv(OUTPUT_DIR / "X_meta.csv")
 
 print("\nMetadata prepared.")
 print("Unique metadata shape:", X_meta.shape)
@@ -329,35 +412,16 @@ for condition in conditions:
     dataset_path = OUTPUT_DIR / f"dataset_{condition}.csv"
     dataset.to_csv(dataset_path, index=False)
 
-    # Language dataset: valid lang only
-    dataset_lang = dataset[
-        dataset["lang"].notna()
-        & ~dataset["lang"].astype(str).str.lower().isin(["nan", "none", ""])
-    ].copy()
-
-    dataset_lang_path = OUTPUT_DIR / f"dataset_lang_{condition}.csv"
-    dataset_lang.to_csv(dataset_lang_path, index=False)
-
-    dataset_age = dataset[
-        # dataset["age_group"].isin(["5-7", "8-12", "Teen", "Adult"])
-        dataset["age_group"].isin(["5-7", "8-12"])
-    ].copy()
-
-    dataset_age_path = OUTPUT_DIR / f"dataset_age_{condition}.csv"
-    dataset_age.to_csv(dataset_age_path, index=False)
-
     missing_meta = dataset[dataset["lang"].isna()]
 
     print("Saved:", x_path)
     print("Saved:", dataset_path)
-    print("Saved:", dataset_lang_path)
-    print("Saved:", dataset_age_path)
 
     print("\nMerged dataset shape:", dataset.shape)
     print("Rows without lang metadata:", missing_meta.shape[0])
 
     print("\nLanguage counts:")
-    print(dataset_lang["lang"].value_counts(dropna=False))
+    print(dataset["lang"].value_counts(dropna=False))
 
     print("\nAge group counts:")
     print(dataset["age_group"].value_counts(dropna=False))
