@@ -1,8 +1,29 @@
-from pathlib import Path
 import re
 import numpy as np
 import pandas as pd
+from pathlib import Path
+import argparse
 
+# ============================================================
+# 0. Read command line arguments for start and end time
+# ============================================================
+
+# 1. Initialize the parser
+parser = argparse.ArgumentParser(description="Process EEG time windows.")
+
+# 2. Define the arguments and force them to be integers
+# Using -500 and 1000 as default fallbacks based on your standard epoch
+parser.add_argument("--start_time", type=int, default=-500, help="Start time in milliseconds")
+parser.add_argument("--end_time", type=int, default=1000, help="End time in milliseconds")
+
+# 3. Parse the arguments from the command line
+args = parser.parse_args()
+
+# 4. Access the variables (they are already converted to integers)
+time_start_arg = args.start_time
+time_end_arg = args.end_time
+    
+print(f"Analyzing time window from {time_start_arg}ms to {time_end_arg}ms")
 
 # ============================================================
 # 1. Set paths
@@ -14,6 +35,7 @@ if BASE_DIR.name == "scripts":
 DATA_DIR = BASE_DIR / "data"
 OUTPUT_DIR = BASE_DIR / "outputs"
 OUTPUT_DIR.mkdir(exist_ok=True)
+INPUT_DIR = OUTPUT_DIR
 base_path = Path(DATA_DIR).expanduser()
 
 print("BASE_DIR:", BASE_DIR)
@@ -146,8 +168,8 @@ def read_conn_file_to_features(conn_path, condition_name):
     time_start = header["TimeStartInMS"] # -500
     interval = header["IntervalInMS"] # 50
 
-    time_start_used = 0
-    time_end_used = 800
+    time_start_used = time_start_arg
+    time_end_used = time_end_arg
 
     n_time_start_used = int((time_start_used - time_start) / interval)
     n_time_end_used = int((time_end_used - time_start) / interval)
@@ -320,7 +342,6 @@ def read_meta_data_from_conn_file(conn_path):
     lang, gender, age = extract_participant_info(participant_id, group_dir)
     age_group_orig, age_group_edu = extract_age_group(age, group_dir)
     lang_group = 'C' if lang == 'C' else 'NC'
-    age_lang_group = f"{age_group_orig}_{lang_group}" if age_group_orig and lang_group else None
     
     row = {
         "participant_id": participant_id,
@@ -330,7 +351,6 @@ def read_meta_data_from_conn_file(conn_path):
         "age_group_edu": age_group_edu,
         "lang": lang,
         "lang_group": lang_group,
-        "age_lang_group": age_lang_group,
         "file_name": filename
     }
 
