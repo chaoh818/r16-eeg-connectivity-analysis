@@ -2,27 +2,25 @@
 """
 06_compare_bands_all_conditions_multiclass.py
 ---------------------------------------------
-Compares classification performance across multiple tasks including cross-group
-interactions:
-- Tasks:
-  0) Age_Group (4-class: 5-7, 8-12, Teen, Adult)
-  1) Age_Child_Lang2 (4-class interaction: 5-7_C, 5-7_NC, 8-12_C, 8-12_NC for child age subset [5-7, 8-12])
-  2) Age_Child_Lang4 (8-class interaction: 5-7_C/E/S/A vs 8-12_C/E/S/A for child age subset [5-7, 8-12])
-  3) Age_Edu_Lang2 (4-class interaction: 5-7_C, 5-7_NC, 8-12_C, 8-12_NC for child age subset [5-7, 8-12])
-  4) Age_Edu_Lang4 (8-class interaction: 5-7_C/E/S/A vs 8-12_C/E/S/A for child age subset [5-7, 8-12])
+Compares multiclass and binary classification performance for EEG connectivity features
+using Nested Cross-Validation (Outer 5-Fold, Inner 3-Fold Grid Search) across:
 - Three conditions: gu1, gu2, gu3
 - Seven band settings: delta, theta, alpha, beta, highbeta, gamma, all
-- Three models: Linear SVM, Random Forest, Elastic Net
+- Three models: Linear/RBF SVM, Random Forest, Elastic Net
+- Five tasks: Age Group, Lookup Language, Lookup Age Group, 4-class Child Interaction, 8-class Child Interaction
 
+Prevents data scaling leakage via sklearn Pipeline and tunes model hyperparameters on training folds.
 Saves results to the 'outputs/' directory.
 """
+
 
 import os
 import sys
 import numpy as np
 import pandas as pd
-from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import StratifiedKFold, GridSearchCV
 from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import Pipeline
 from sklearn.svm import SVC
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
@@ -47,6 +45,13 @@ base_path = Path(DATA_DIR).expanduser()
 CONDITIONS = ["gu1", "gu2", "gu3"]
 BANDS = ["delta", "theta", "alpha", "beta", "highbeta", "gamma", "all"]
 
+TASKS = {
+    "Age_Group": "age_group",
+    "Lang2_Group": "lang_group",
+    "Lang4_Group": "lang",
+    "Age_Child_Lang2": "interaction_child_lang2"
+}
+
 def get_features_for_band(df, band):
     all_bands = ["delta", "theta", "alpha", "beta", "highbeta", "gamma"]
     if band == "all":
@@ -54,79 +59,81 @@ def get_features_for_band(df, band):
     else:
         return [col for col in df.columns if col.startswith(band + "_")]
 
-def prepare_task_data(df, task_name):
-    """
-    Extracts feature matrix X, target labels y, and class names for a given task.
-    Supports single targets and cross-group child-subset interaction targets.
-    """
-    # Identify available column names
-    age_col = 'age_group'
-    age_edu_col = 'age_group_edu'
-    lang2_col = 'lang_group' 
-    lang4_col = 'lang' 
+def prepare_task_data(df, task_key, target_col):
+    """Prepares and filters dataset for the given task key and target column."""
+    df_task = df.copy()
     
-    df_clean = df.copy()
+    # Target column mapping and fallback detection
+    if target_col not in df_task.columns:
+        if task_key == "Age_Group" and "age_group" in df_task.columns:
+            target_col = "age_group"
+        elif task_key == "Lang2_Group" and "lang_group" in df_task.columns:
+            target_col = "lang_group"
+        elif task_key == "Lang4_Group" and "lang" in df_task.columns:
+            target_col = "lang"
+        elif task_key in ["Age_Child_Lang2", "Age_Child_Lang4"]:
+            if "age_group" in df_task.columns and "lang" in df_task.columns:
+                # Filter population to 5-7 and 8-12 age brackets
+                df_task = df_task[df_task["age_group"].isin(["5-7", "8-12"])]
+                if task_key == "Age_Child_Lang2":
+                    df_task["interaction_child_lang2"] = df_task["age_group"] + "_" + df_task["lang_group"].astype(str)
+                    target_col = "interaction_child_lang2"
+                else:
+                    df_task["interaction_child_lang4"] = df_task["age_group"] + "_" + df_task["lang"].astype(str)
+                    target_col = "interaction_child_lang4"
+            else:
+                return None, None, None
+        else:
+            return None, None, None
+            
+    df_task = df_task.dropna(subset=[target_col])
+    y = df_task[target_col].values
+    classes = sorted(list(np.unique(y)))
     
-    if task_name == "Age_Group":
-        if not age_col or age_col not in df_clean.columns:
-            return None, None, None
-        df_clean = df_clean.dropna(subset=[age_col])
-        y = df_clean[age_col].astype(str).values
-        
-    elif task_name == "Age_Child_Lang2":
-        # Child subset (5-7 and 8-12) x 2 Language categories (e.g. C vs NC / Tonal vs NonTonal) -> 4 Classes
-        if not age_col or not lang2_col or age_col not in df_clean.columns or lang2_col not in df_clean.columns:
-            return None, None, None
-        df_clean = df_clean[df_clean[age_col].astype(str).isin(['5-7', '8-12'])].dropna(subset=[age_col, lang2_col])
-        if len(df_clean) == 0:
-            return None, None, None
-        y = (df_clean[age_col].astype(str) + "_" + df_clean[lang2_col].astype(str)).values
-        
-    elif task_name == "Age_Child_Lang4":
-        # Child subset (5-7 and 8-12) x 4 Language categories (C, E, S, A) -> 8 Classes
-        if not age_col or not lang4_col or age_col not in df_clean.columns or lang4_col not in df_clean.columns:
-            return None, None, None
-        df_clean = df_clean[df_clean[age_col].astype(str).isin(['5-7', '8-12'])].dropna(subset=[age_col, lang4_col])
-        if len(df_clean) == 0:
-            return None, None, None
-        y = (df_clean[age_col].astype(str) + "_" + df_clean[lang4_col].astype(str)).values
-        
-    elif task_name == "Age_Edu_Lang2":
-        # Education Child subset (Elementary and Secondary) x 2 Language categories (e.g. C vs NC / Tonal vs NonTonal) -> 4 Classes
-        if not age_edu_col or not lang2_col or age_edu_col not in df_clean.columns or lang2_col not in df_clean.columns:
-            return None, None, None
-        df_clean = df_clean[df_clean[age_edu_col].astype(str).isin(['Elementary', 'Secondary'])].dropna(subset=[age_edu_col, lang2_col])
-        if len(df_clean) == 0:
-            return None, None, None
-        y = (df_clean[age_edu_col].astype(str) + "_" + df_clean[lang2_col].astype(str)).values
-        
-    elif task_name == "Age_Edu_Lang4":
-        # Education Child subset (Elementary and Secondary) x 4 Language categories (C, E, S, A) -> 8 Classes
-        if not age_edu_col or not lang4_col or age_edu_col not in df_clean.columns or lang4_col not in df_clean.columns:
-            return None, None, None
-        df_clean = df_clean[df_clean[age_edu_col].astype(str).isin(['Elementary', 'Secondary'])].dropna(subset=[age_edu_col, lang4_col])
-        if len(df_clean) == 0:
-            return None, None, None
-        y = (df_clean[age_edu_col].astype(str) + "_" + df_clean[lang4_col].astype(str)).values
-        
-    else:
+    if len(classes) < 2:
         return None, None, None
         
-    classes = sorted(list(np.unique(y)))
-    return df_clean, y, classes
+    return df_task, y, classes
 
-def main():
-    print("=== Step 2: Multiclass and Cross-Group Model Comparison Across Conditions and Bands ===")
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-    
-    tasks = ["Age_Group", "Age_Child_Lang2", "Age_Child_Lang4"]
-    
-    models = {
-        "Linear SVM": SVC(kernel="linear", class_weight="balanced", probability=True, random_state=42),
-        "Random Forest": RandomForestClassifier(n_estimators=500, max_features="sqrt", class_weight="balanced", random_state=42),
-        "Elastic Net": LogisticRegression(penalty="elasticnet", solver="saga", l1_ratio=0.5, C=1.0, class_weight="balanced", max_iter=20000, random_state=42)
+def build_param_grids():
+    """Defines pipelines and hyperparameter search grids for inner cross-validation."""
+    pipelines = {
+        "Elastic Net": Pipeline([
+            ("scaler", StandardScaler()),
+            ("clf", LogisticRegression(penalty="elasticnet", solver="saga", class_weight="balanced", max_iter=20000, random_state=42))
+        ]),
+        "SVM": Pipeline([
+            ("scaler", StandardScaler()),
+            ("clf", SVC(class_weight="balanced", probability=True, random_state=42))
+        ]),
+        "Random Forest": Pipeline([
+            ("clf", RandomForestClassifier(class_weight="balanced", random_state=42))
+        ])
     }
     
+    param_grids = {
+        "Elastic Net": {
+            "clf__C": [0.01, 0.1, 1.0, 10.0],
+            "clf__l1_ratio": [0.2, 0.5, 0.8]
+        },
+        "SVM": {
+            "clf__kernel": ["linear", "rbf"],
+            "clf__C": [0.1, 1.0, 10.0],
+            "clf__gamma": ["scale", "auto"]
+        },
+        "Random Forest": {
+            "clf__n_estimators": [100, 300],
+            "clf__max_depth": [None, 5, 10],
+            "clf__max_features": ["sqrt", "log2"]
+        }
+    }
+    return pipelines, param_grids
+
+def main():
+    print("=== Step 2: Multi-Task Model Comparison with Nested CV & Grid Search ===")
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    
+    pipelines, param_grids = build_param_grids()
     results = []
     
     for condition in CONDITIONS:
@@ -138,75 +145,82 @@ def main():
             continue
             
         print(f"\nProcessing Condition: {condition} (from {file_path})")
-        df_raw = pd.read_csv(file_path)
-        df_raw = df_raw.drop_duplicates(subset=["participant_id"])
+        df_raw = pd.read_csv(file_path).drop_duplicates(subset=["participant_id"])
         
-        for task_name in tasks:
-            df_task, y, classes = prepare_task_data(df_raw, task_name)
-            
-            if df_task is None or y is None or len(np.unique(y)) < 2:
-                print(f"  [Skipping Task: {task_name}] Target or required columns not present/valid.")
+        for task_key, target_col in TASKS.items():
+            df_task, y, classes = prepare_task_data(df_raw, task_key, target_col)
+            if df_task is None:
+                print(f"  [Skipping Task: {task_key}] Target column '{target_col}' not available or insufficient classes.")
                 continue
                 
             n_classes = len(classes)
-            print(f"\n  Evaluating Task: {task_name} | Target Classes ({n_classes}): {classes} | Samples: {len(df_task)}")
+            is_binary = (n_classes == 2)
+            scoring_metric = "roc_auc" if is_binary else "roc_auc_ovr"
+            
+            print(f"\n  Evaluating Task: {task_key} ({n_classes} classes: {classes})")
             
             for band in BANDS:
                 feature_cols = get_features_for_band(df_task, band)
                 if not feature_cols:
+                    print(f"    Warning: No features found for band '{band}'. Skipping.")
                     continue
                     
                 X = df_task[feature_cols].values
                 
-                for model_name, model in models.items():
-                    # 5-Fold Stratified CV
-                    # Use min splits if a class has fewer samples
-                    class_counts = pd.Series(y).value_counts()
-                    min_samples = class_counts.min()
-                    n_splits = min(5, min_samples)
+                # Dynamic fold count based on class distribution
+                class_counts = pd.Series(y).value_counts()
+                min_samples = class_counts.min()
+                
+                if min_samples < 2:
+                    print(f"    Skipping {task_key} on band {band}: a class has fewer than 2 samples ({min_samples}).")
+                    continue
                     
-                    if n_splits < 2:
-                        print(f"    [Warning] Insufficient class samples for CV in {task_name}. Skipping.")
-                        continue
-                        
-                    skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
+                outer_splits = min(5, min_samples)
+                inner_splits = min(3, min_samples - 1) if min_samples > 1 else 2
+                
+                if outer_splits < 2 or inner_splits < 2:
+                    continue
                     
-                    fold_accs, fold_aucs = [], []
-                    fold_sensitivities, fold_specificities = [], []
+                outer_cv = StratifiedKFold(n_splits=outer_splits, shuffle=True, random_state=42)
+                
+                for model_name, pipeline in pipelines.items():
+                    param_grid = param_grids[model_name]
                     
-                    for train_idx, test_idx in skf.split(X, y):
+                    outer_accs, outer_aucs = [], []
+                    outer_sens, outer_specs = [], []
+                    best_params_per_fold = []
+                    
+                    for fold_idx, (train_idx, test_idx) in enumerate(outer_cv.split(X, y)):
                         X_train, X_test = X[train_idx], X[test_idx]
                         y_train, y_test = y[train_idx], y[test_idx]
                         
-                        if model_name in ["Linear SVM", "Elastic Net"]:
-                            scaler = StandardScaler()
-                            X_train_scaled = scaler.fit_transform(X_train)
-                            X_test_scaled = scaler.transform(X_test)
+                        inner_cv = StratifiedKFold(n_splits=inner_splits, shuffle=True, random_state=42)
+                        grid_search = GridSearchCV(
+                            estimator=pipeline,
+                            param_grid=param_grid,
+                            scoring=scoring_metric,
+                            cv=inner_cv,
+                            n_jobs=-1
+                        )
+                        
+                        grid_search.fit(X_train, y_train)
+                        best_model = grid_search.best_estimator_
+                        best_params_per_fold.append(str(grid_search.best_params_))
+                        
+                        y_pred = best_model.predict(X_test)
+                        y_proba = best_model.predict_proba(X_test)
+                        
+                        outer_accs.append(accuracy_score(y_test, y_pred))
+                        
+                        if is_binary:
+                            auc = roc_auc_score(y_test, y_proba[:, 1], labels=classes)
                         else:
-                            X_train_scaled = X_train
-                            X_test_scaled = X_test
-                            
-                        model.fit(X_train_scaled, y_train)
-                        
-                        y_pred = model.predict(X_test_scaled)
-                        y_proba = model.predict_proba(X_test_scaled)
-                        
-                        fold_accs.append(accuracy_score(y_test, y_pred))
-                        
-                        if n_classes == 2:
-                            # Handle binary case
-                            pos_label = classes[1]
-                            pos_idx = list(model.classes_).index(pos_label)
-                            auc = roc_auc_score(y_test == pos_label, y_proba[:, pos_idx])
-                        else:
-                            # Multiclass OvR macro AUC
                             auc = roc_auc_score(y_test, y_proba, multi_class='ovr', average='macro', labels=classes)
-                            
-                        fold_aucs.append(auc)
+                        outer_aucs.append(auc)
                         
+                        # Confusion matrix for Sensitivity and Specificity
                         cm = confusion_matrix(y_test, y_pred, labels=classes)
                         sens_list, spec_list = [], []
-                        
                         for i in range(n_classes):
                             tp = cm[i, i]
                             fn = sum(cm[i, :]) - tp
@@ -219,42 +233,43 @@ def main():
                             sens_list.append(sens)
                             spec_list.append(spec)
                             
-                        fold_sensitivities.append(np.mean(sens_list))
-                        fold_specificities.append(np.mean(spec_list))
-                    
+                        outer_sens.append(np.mean(sens_list))
+                        outer_specs.append(np.mean(spec_list))
+                        
                     results.append({
-                        "Task": task_name,
+                        "Task": task_key,
                         "Condition": condition,
                         "Band": band,
                         "Model": model_name,
-                        "N_Classes": n_classes,
-                        "AUC_mean": np.mean(fold_aucs),
-                        "AUC_std": np.std(fold_aucs),
-                        "Accuracy_mean": np.mean(fold_accs),
-                        "Accuracy_std": np.std(fold_accs),
-                        "Sensitivity_mean": np.mean(fold_sensitivities),
-                        "Sensitivity_std": np.std(fold_sensitivities),
-                        "Specificity_mean": np.mean(fold_specificities),
-                        "Specificity_std": np.std(fold_specificities)
+                        "AUC_mean": np.mean(outer_aucs),
+                        "AUC_std": np.std(outer_aucs),
+                        "Accuracy_mean": np.mean(outer_accs),
+                        "Accuracy_std": np.std(outer_accs),
+                        "Sensitivity_mean": np.mean(outer_sens),
+                        "Sensitivity_std": np.std(outer_sens),
+                        "Specificity_mean": np.mean(outer_specs),
+                        "Specificity_std": np.std(outer_specs),
+                        "Optimal_Params_Fold_List": "; ".join(best_params_per_fold)
                     })
                     
-                    print(f"    - Band: {band:10} | Model: {model_name:13} | AUC = {np.mean(fold_aucs):.4f} | Acc = {np.mean(fold_accs):.4f}")
-                    
+                    print(f"    - Band: {band:10} | Model: {model_name:13} | Nested AUC = {np.mean(outer_aucs):.4f} | Acc = {np.mean(outer_accs):.4f}")
+
+    # Save raw band-wise results
     results_df = pd.DataFrame(results)
     output_path = os.path.join(OUTPUT_DIR, "multiclass_results_all_conditions.csv")
     results_df.to_csv(output_path, index=False)
     print(f"\n✓ Saved full results to: '{output_path}'")
     
     if len(results_df) > 0:
-        best_overall = results_df.sort_values(by="AUC_mean", ascending=False)
+        best_overall = results_df.sort_values(by="AUC_mean", ascending=False).groupby(["Task"]).head(5)
         best_overall_path = os.path.join(OUTPUT_DIR, "multiclass_best_overall_by_task.csv")
-        best_overall.head(10).to_csv(best_overall_path, index=False)
-        print(f"✓ Saved top 10 overall models to: '{best_overall_path}'")
+        best_overall.to_csv(best_overall_path, index=False)
+        print(f"✓ Saved top overall models by task to: '{best_overall_path}'")
         
-        best_by_cond = results_df.sort_values("AUC_mean", ascending=False).groupby(["Task", "Condition"]).first().reset_index()
+        best_by_cond = results_df.sort_values("AUC_mean", ascending=False).groupby(["Condition", "Task"]).first().reset_index()
         best_by_cond_path = os.path.join(OUTPUT_DIR, "multiclass_best_results_all_conditions.csv")
         best_by_cond.to_csv(best_by_cond_path, index=False)
-        print(f"✓ Saved best models per task-condition to: '{best_by_cond_path}'")
+        print(f"✓ Saved best model per condition and task to: '{best_by_cond_path}'")
 
 if __name__ == "__main__":
     main()

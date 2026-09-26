@@ -1,359 +1,304 @@
-from pathlib import Path
-import warnings
+#!/usr/bin/env python3
+"""
+06_compare_bands_all_conditions_multiclass.py
+---------------------------------------------
+Compares multiclass and binary classification performance for EEG datasets
+combining Power Spectral Density (PSD) and Functional Connectivity (FC) features.
 
+Evaluates across:
+- Three stimulus conditions: gu1, gu2, gu3
+- Seven frequency bands: delta, theta, alpha, beta, highbeta, gamma, all
+- Three feature representations: FC (Coherence), PSD (Power), PSD_FC (Combined)
+- Three classification tasks: Age_Group, Age_Child_Lang2, Age_Child_Lang4
+- Three classifiers: Linear SVM, Random Forest, Elastic Net
+
+Saves results to the 'outputs/' directory.
+"""
+
+import os
+import sys
 import numpy as np
 import pandas as pd
-
-from sklearn.model_selection import StratifiedKFold, cross_validate
-from sklearn.pipeline import Pipeline
+from sklearn.model_selection import StratifiedKFold
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import confusion_matrix, make_scorer
-
+from sklearn.metrics import accuracy_score, roc_auc_score, confusion_matrix
+import warnings
+warnings.filterwarnings('ignore')
+from pathlib import Path
 
 # ============================================================
-# 1. Paths
+# 1. Set paths
 # ============================================================
 
 BASE_DIR = Path(__file__).resolve().parent
 if BASE_DIR.name == "scripts":
     BASE_DIR = BASE_DIR.parent
+DATA_DIR = BASE_DIR / "data"
 OUTPUT_DIR = BASE_DIR / "outputs"
+OUTPUT_DIR.mkdir(exist_ok=True)
+INPUT_DIR = OUTPUT_DIR
+base_path = Path(DATA_DIR).expanduser()
 
-# conditions = ["gu1"]
-conditions = ["gu1", "gu2", "gu3"]
+CONDITIONS = ["gu1", "gu2", "gu3"]
+BANDS = ["delta", "theta", "alpha", "beta", "highbeta", "gamma", "all"]
+FEATURE_MODES = ["FC", "PSD", "PSD_FC"]
 
-print("BASE_DIR:", BASE_DIR)
-print("OUTPUT_DIR:", OUTPUT_DIR)
-
-
-# ============================================================
-# 2. Metrics
-# ============================================================
-
-def specificity_score(y_true, y_pred):
-    cm = confusion_matrix(y_true, y_pred, labels=[0, 1])
-    tn, fp, fn, tp = cm.ravel()
-    if (tn + fp) == 0:
-        return np.nan
-    return tn / (tn + fp)
-
-
-scoring = {
-    "accuracy": "accuracy",
-    "auc": "roc_auc",
-    "sensitivity": "recall",
-    "specificity": make_scorer(specificity_score),
+TASKS = {
+    "Age_Group": "age_group",
+    "Age_Child_Lang2": "interaction_child_lang2",
+    "Age_Child_Lang4": "interaction_child_lang4"
 }
 
+ALL_BANDS = ["delta", "theta", "alpha", "beta", "highbeta", "gamma"]
 
-# ============================================================
-# 3. Models
-# ============================================================
+def classify_column_type(col):
+    """
+    Classifies a dataset column into 'PSD' (single channel spectral power)
+    or 'FC' (pairwise channel connectivity / coherence).
+    """
+    col_str = str(col).lower()
+    
+    # Exclude metadata columns
+    meta_keywords = ["participant", "file", "condition", "age", "lang", "lookup", "task", "interaction"]
+    if any(m in col_str for m in meta_keywords):
+        return "META"
+        
+    # Check explicitly labeled PSD columns
+    if "psd" in col_str or "power" in col_str or "pow" in col_str:
+        return "PSD"
+        
+    # Check band prefixes
+    matching_band = None
+    for band in ALL_BANDS:
+        if col_str.startswith(band + "_") or col_str.startswith("psd_" + band):
+            matching_band = band
+            break
+            
+    if not matching_band:
+        return "OTHER"
+        
+    # Split column tokens to distinguish single-channel (PSD) vs pair (FC)
+    # e.g., 'delta_ACtL_ACrL' -> FC (3 parts), 'delta_ACtL' -> PSD (2 parts)
+    parts = [p for p in col_str.split("_") if p != "psd" and p != "power"]
+    
+    # If it has 3+ parts or pairwise delimiter, it's Functional Connectivity (FC)
+    if len(parts) >= 3 or "-" in col_str:
+        return "FC"
+    elif len(parts) == 2:
+        return "PSD"
+    else:
+        return "FC" # Default connectivity feature
 
-def get_models():
-    return {
-        "SVM_linear": Pipeline([
-            ("scaler", StandardScaler()),
-            ("model", SVC(
-                kernel="linear",
-                probability=True,
-                class_weight="balanced",
-                random_state=42
-            ))
-        ]),
+def get_features_by_band_and_mode(df, band, mode):
+    """
+    Extracts column names matching a specific frequency band and feature mode (FC, PSD, or PSD_FC).
+    """
+    target_bands = ALL_BANDS if band == "all" else [band]
+    
+    selected_cols = []
+    for col in df.columns:
+        col_type = classify_column_type(col)
+        if col_type == "META":
+            continue
+            
+        col_str = str(col).lower()
+        # Check if column belongs to requested band(s)
+        belongs_to_band = any(col_str.startswith(b + "_") or f"_{b}_" in col_str or col_str.startswith("psd_" + b) for b in target_bands)
+        
+        if not belongs_to_band:
+            continue
+            
+        if mode == "PSD_FC":
+            if col_type in ["PSD", "FC", "OTHER"]:
+                selected_cols.append(col)
+        elif mode == "FC":
+            if col_type == "FC":
+                selected_cols.append(col)
+        elif mode == "PSD":
+            if col_type == "PSD":
+                selected_cols.append(col)
+                
+    # Fallback: if PSD alone is requested but columns aren't explicitly named PSD,
+    # fallback to all band columns to ensure non-empty matrix
+    if mode == "PSD" and not selected_cols:
+        for col in df.columns:
+            col_type = classify_column_type(col)
+            if col_type != "META" and any(str(col).lower().startswith(b + "_") for b in target_bands):
+                selected_cols.append(col)
+                
+    return selected_cols
 
-        "RandomForest": RandomForestClassifier(
-            n_estimators=500,
-            max_features="sqrt",
-            class_weight="balanced",
-            random_state=42
-        ),
+def prepare_task_data(df, task_key, target_col):
+    """
+    Prepares dataset and target array for a specific analysis task.
+    """
+    df_task = df.copy()
+    
+    if target_col not in df_task.columns:
+        if task_key == "Age_Group" and "age_group" in df_task.columns:
+            target_col = "age_group"
+        elif task_key in ["Age_Child_Lang2", "Age_Child_Lang4"]:
+            if "age_group" in df_task.columns and "lang" in df_task.columns:
+                df_task = df_task[df_task["age_group"].isin(["5-7", "8-12"])]
+                if task_key == "Age_Child_Lang2":
+                    def map_lang2(l):
+                        s = str(l).upper()
+                        return "C" if any(k in s for k in ["C", "ZH", "MANDARIN"]) else "NC"
+                    df_task["interaction_child_lang2"] = df_task["age_group"] + "_" + df_task["lang_group"].astype(str)
+                    target_col = "interaction_child_lang2"
+                else:
+                    df_task["interaction_child_lang4"] = df_task["age_group"] + "_" + df_task["lang"].astype(str)
+                    target_col = "interaction_child_lang4"
+            else:
+                return None, None, None
+        else:
+            return None, None, None
+            
+    df_task = df_task.dropna(subset=[target_col])
+    y = df_task[target_col].values
+    classes = sorted(list(np.unique(y)))
+    
+    if len(classes) < 2:
+        return None, None, None
+        
+    return df_task, y, classes
 
-        "ElasticNet": Pipeline([
-            ("scaler", StandardScaler()),
-            ("model", LogisticRegression(
-                penalty="elasticnet",
-                solver="saga",
-                l1_ratio=0.5,
-                C=1.0,
-                class_weight="balanced",
-                max_iter=20000,
-                random_state=42
-            ))
-        ])
+def main():
+    print("=== Step 2: Multi-Task Model Comparison (Combining PSD and FC Features) ===")
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    
+    # Define machine learning classifiers
+    models = {
+        "Linear SVM": SVC(kernel="linear", class_weight="balanced", probability=True, random_state=42),
+        "Random Forest": RandomForestClassifier(n_estimators=500, max_features="sqrt", class_weight="balanced", random_state=42),
+        "Elastic Net": LogisticRegression(penalty="elasticnet", solver="saga", l1_ratio=0.5, C=1.0, class_weight="balanced", max_iter=20000, random_state=42)
     }
-
-
-# ============================================================
-# 4. Feature bands
-# ============================================================
-
-band_prefixes = {
-    "delta": "delta_",
-    "theta": "theta_",
-    "alpha": "alpha_",
-    "beta": "beta_",
-    "highbeta": "highbeta_",
-    "gamma": "gamma_",
-}
-
-
-def get_band_feature_cols(df):
-    band_feature_cols = {}
-
-    for band, prefix in band_prefixes.items():
-        cols = [col for col in df.columns if col.startswith(prefix)]
-        band_feature_cols[band] = cols
-
-    all_cols = []
-    for cols in band_feature_cols.values():
-        all_cols.extend(cols)
-
-    band_feature_cols["all"] = all_cols
-
-    return band_feature_cols
-
-
-# ============================================================
-# 5. Run one task
-# ============================================================
-
-def run_binary_task(
-    df,
-    condition,
-    task_name,
-    label_col,
-    positive_label,
-    negative_label,
-    n_splits=5
-):
-    task_df = df[df[label_col].isin([positive_label, negative_label])].copy()
-
-    task_df["binary_y"] = task_df[label_col].apply(
-        lambda x: 1 if x == positive_label else 0
-    )
-
-    print("\n" + "=" * 90)
-    print("Condition:", condition)
-    print("Task:", task_name)
-    print("Positive:", positive_label)
-    print("Negative:", negative_label)
-    print("Task dataset shape:", task_df.shape)
-    print("Class counts:")
-    print(task_df[label_col].value_counts(dropna=False))
-    print("=" * 90)
-
-    if task_df["binary_y"].nunique() != 2:
-        print("Skipped: only one class found.")
-        return pd.DataFrame()
-
-    min_class_count = task_df["binary_y"].value_counts().min()
-    effective_splits = min(n_splits, int(min_class_count))
-
-    if effective_splits < 2:
-        print("Skipped: not enough samples for CV.")
-        return pd.DataFrame()
-
-    cv = StratifiedKFold(
-        n_splits=effective_splits,
-        shuffle=True,
-        random_state=42
-    )
-
-    band_feature_cols = get_band_feature_cols(task_df)
+    
     results = []
+    
+    for condition in CONDITIONS:
+        filename = f"dataset_{condition}.csv"
+        file_path = os.path.join(INPUT_DIR, filename)
+        
+        if not os.path.exists(file_path):
+            file_path = os.path.join("/workspace/scratch", filename)
+            
+        if not os.path.exists(file_path):
+            print(f"Warning: File {filename} not found. Skipping condition {condition}.")
+            continue
+            
+        print(f"\nProcessing Condition: {condition} (from {file_path})")
+        df_raw = pd.read_csv(file_path)
+        if "participant_id" in df_raw.columns:
+            df_raw = df_raw.drop_duplicates(subset=["participant_id"])
+            
+        for task_key, target_col in TASKS.items():
+            df_task, y, classes = prepare_task_data(df_raw, task_key, target_col)
+            if df_task is None:
+                continue
+                
+            n_classes = len(classes)
+            is_binary = (n_classes == 2)
+            
+            print(f"\n  Evaluating Task: {task_key} ({n_classes} classes: {classes})")
+            
+            for mode in FEATURE_MODES:
+                for band in BANDS:
+                    feature_cols = get_features_by_band_and_mode(df_task, band, mode)
+                    if not feature_cols:
+                        continue
+                        
+                    X = df_task[feature_cols].values
+                    n_features = X.shape[1]
+                    
+                    # Adaptive stratified cross-validation
+                    class_counts = pd.Series(y).value_counts()
+                    min_samples = class_counts.min()
+                    n_splits = min(5, min_samples)
+                    
+                    if n_splits < 2:
+                        continue
+                        
+                    skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
+                    
+                    for model_name, model in models.items():
+                        fold_accs, fold_aucs = [], []
+                        fold_sens, fold_specs = [], []
+                        
+                        for train_idx, test_idx in skf.split(X, y):
+                            X_train, X_test = X[train_idx], X[test_idx]
+                            y_train, y_test = y[train_idx], y[test_idx]
+                            
+                            # Standardize numeric features for SVM and Elastic Net
+                            if model_name in ["Linear SVM", "Elastic Net"]:
+                                scaler = StandardScaler()
+                                X_train_scaled = scaler.fit_transform(X_train)
+                                X_test_scaled = scaler.transform(X_test)
+                            else:
+                                X_train_scaled = X_train
+                                X_test_scaled = X_test
+                                
+                            model.fit(X_train_scaled, y_train)
+                            
+                            y_pred = model.predict(X_test_scaled)
+                            y_proba = model.predict_proba(X_test_scaled)
+                            
+                            fold_accs.append(accuracy_score(y_test, y_pred))
+                            
+                            # ROC AUC evaluation (binary vs OvR multiclass)
+                            if is_binary:
+                                auc = roc_auc_score(y_test, y_proba[:, 1], labels=classes)
+                            else:
+                                auc = roc_auc_score(y_test, y_proba, multi_class='ovr', average='macro', labels=classes)
+                            fold_aucs.append(auc)
+                            
+                            # Macro-averaged Sensitivity and Specificity
+                            cm = confusion_matrix(y_test, y_pred, labels=classes)
+                            s_list, sp_list = [], []
+                            for i in range(n_classes):
+                                tp = cm[i, i]
+                                fn = sum(cm[i, :]) - tp
+                                fp = sum(cm[:, i]) - tp
+                                tn = sum(sum(cm)) - tp - fn - fp
+                                
+                                s_list.append(tp / (tp + fn) if (tp + fn) > 0 else 0)
+                                sp_list.append(tn / (tn + fp) if (tn + fp) > 0 else 0)
+                                
+                            fold_sens.append(np.mean(s_list))
+                            fold_specs.append(np.mean(sp_list))
+                            
+                        results.append({
+                            "Task": task_key,
+                            "Condition": condition,
+                            "Feature_Mode": mode,
+                            "Band": band,
+                            "Model": model_name,
+                            "N_Features": n_features,
+                            "AUC_mean": np.mean(fold_aucs),
+                            "AUC_std": np.std(fold_aucs),
+                            "Accuracy_mean": np.mean(fold_accs),
+                            "Accuracy_std": np.std(fold_accs),
+                            "Sensitivity_mean": np.mean(fold_sens),
+                            "Sensitivity_std": np.std(fold_sens),
+                            "Specificity_mean": np.mean(fold_specs),
+                            "Specificity_std": np.std(fold_specs)
+                        })
+                        
+                        print(f"    - Mode: {mode:6} | Band: {band:8} | Model: {model_name:13} | N_Feat: {n_features:3} | AUC = {np.mean(fold_aucs):.4f} | Acc = {np.mean(fold_accs):.4f}")
 
-    for band_name, feature_cols in band_feature_cols.items():
-        X = task_df[feature_cols].copy()
-        y = task_df["binary_y"].astype(int)
+    results_df = pd.DataFrame(results)
+    output_path = os.path.join(OUTPUT_DIR, "multiclass_results_all_conditions.csv")
+    results_df.to_csv(output_path, index=False)
+    print(f"\n✓ Saved full results to: '{output_path}'")
+    
+    if len(results_df) > 0:
+        best_overall = results_df.sort_values(by="AUC_mean", ascending=False).groupby(["Task", "Condition"]).first().reset_index()
+        best_overall_path = os.path.join(OUTPUT_DIR, "multiclass_best_results_all_conditions.csv")
+        best_overall.to_csv(best_overall_path, index=False)
+        print(f"✓ Saved top model per task-condition to: '{best_overall_path}'")
 
-        print(f"\nRunning condition={condition}, task={task_name}, band={band_name}, features={len(feature_cols)}")
-
-        for model_name, model in get_models().items():
-            print(f"  Model: {model_name}")
-
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")
-
-                scores = cross_validate(
-                    model,
-                    X,
-                    y,
-                    cv=cv,
-                    scoring=scoring,
-                    return_train_score=False
-                )
-
-            results.append({
-                "condition": condition,
-                "task": task_name,
-                "band": band_name,
-                "model": model_name,
-                "n_samples": len(task_df),
-                "n_positive": int((y == 1).sum()),
-                "n_negative": int((y == 0).sum()),
-                "n_splits": effective_splits,
-                "n_features": len(feature_cols),
-
-                "accuracy_mean": scores["test_accuracy"].mean(),
-                "accuracy_sd": scores["test_accuracy"].std(),
-
-                "auc_mean": scores["test_auc"].mean(),
-                "auc_sd": scores["test_auc"].std(),
-
-                "sensitivity_mean": scores["test_sensitivity"].mean(),
-                "sensitivity_sd": scores["test_sensitivity"].std(),
-
-                "specificity_mean": scores["test_specificity"].mean(),
-                "specificity_sd": scores["test_specificity"].std(),
-            })
-
-    return pd.DataFrame(results)
-
-
-# ============================================================
-# 6. Run all conditions and tasks
-# ============================================================
-
-all_results = []
-
-for condition in conditions:
-    dataset_path = OUTPUT_DIR / f"dataset_{condition}.csv"
-
-    print("\n" + "#" * 90)
-    print("Loading:", dataset_path)
-    print("#" * 90)
-
-    if not dataset_path.exists():
-        print("Missing dataset:", dataset_path)
-        continue
-
-    df = pd.read_csv(dataset_path)
-
-    print("Dataset shape:", df.shape)
-    print("Language counts:")
-    print(df["lang"].value_counts(dropna=False))
-    print("Age group counts:")
-    print(df["age_group"].value_counts(dropna=False))
-
-    # Task 1: Language C vs S
-    # result_lang_cs = run_binary_task(
-    #     df=df,
-    #     condition=condition,
-    #     task_name="language_C_vs_S",
-    #     label_col="lang",
-    #     positive_label="C",
-    #     negative_label="S",
-    #     n_splits=5
-    # )
-    # all_results.append(result_lang_cs)
-
-    # Task 2: Language C vs Others
-    df_lang = df[df["lang"].notna()].copy()
-    df_lang["lang_binary_task"] = df_lang["lang"].apply(
-        # lambda x: "C" if x == "C" else "Others"
-        lambda x: "Mandarin" if x == "Mandarin" else "Others"
-    )
-
-    result_lang_c_others = run_binary_task(
-        df=df_lang,
-        condition=condition,
-        task_name="language_C_vs_Others",
-        label_col="lang_binary_task",
-        positive_label="Mandarin",
-        negative_label="Others",
-        n_splits=5
-    )
-    all_results.append(result_lang_c_others)
-
-    # Task 3: Age 8-12 vs 5-7
-    result_age = run_binary_task(
-        df=df,
-        condition=condition,
-        task_name="age_8-12_vs_5-7",
-        label_col="age_group",
-        positive_label="8-12",
-        negative_label="5-7",
-        n_splits=5
-    )
-    all_results.append(result_age)
-
-
-results_all = pd.concat(
-    [r for r in all_results if not r.empty],
-    ignore_index=True
-)
-
-
-# ============================================================
-# 7. Save outputs
-# ============================================================
-
-full_path = OUTPUT_DIR / "bandwise_results_all_conditions.csv"
-results_all.to_csv(full_path, index=False)
-
-print("\n" + "=" * 90)
-print("Saved full results to:")
-print(full_path)
-print("=" * 90)
-
-best_summary = (
-    results_all
-    .sort_values(["task", "condition", "auc_mean"], ascending=[True, True, False])
-    .groupby(["task", "condition"])
-    .head(5)
-    .reset_index(drop=True)
-)
-
-best_path = OUTPUT_DIR / "bandwise_best_results_all_conditions.csv"
-best_summary.to_csv(best_path, index=False)
-
-print("\nTop 5 results per task and condition:")
-print(best_summary[[
-    "condition",
-    "task",
-    "band",
-    "model",
-    "n_samples",
-    "n_features",
-    "accuracy_mean",
-    "auc_mean",
-    "sensitivity_mean",
-    "specificity_mean"
-]])
-
-print("\nSaved best summary to:")
-print(best_path)
-
-
-# Best overall per task
-best_overall = (
-    results_all
-    .sort_values(["task", "auc_mean"], ascending=[True, False])
-    .groupby("task")
-    .head(10)
-    .reset_index(drop=True)
-)
-
-best_overall_path = OUTPUT_DIR / "bandwise_best_overall_by_task.csv"
-best_overall.to_csv(best_overall_path, index=False)
-
-print("\nBest overall results by task:")
-print(best_overall[[
-    "condition",
-    "task",
-    "band",
-    "model",
-    "n_samples",
-    "n_features",
-    "accuracy_mean",
-    "auc_mean",
-    "sensitivity_mean",
-    "specificity_mean"
-]])
-
-print("\nSaved best overall summary to:")
-print(best_overall_path)
+if __name__ == "__main__":
+    main()
