@@ -9,7 +9,7 @@ Evaluates across:
 - Three stimulus conditions: gu1, gu2, gu3
 - Seven frequency bands: delta, theta, alpha, beta, highbeta, gamma, all
 - Three feature representations: FC (Coherence), PSD (Power), PSD_FC (Combined)
-- Three classification tasks: Age_Group, Age_Child_Lang2, Age_Child_Lang4
+- Multiple classification tasks: eg. Age_Group, Age_Child_Language
 - Three classifiers: Linear SVM, Random Forest, Elastic Net
 
 Saves results to the 'outputs/' directory.
@@ -48,8 +48,10 @@ FEATURE_MODES = ["FC", "PSD", "PSD_FC"]
 
 TASKS = {
     "Age_Group": "age_group",
-    "Age_Child_Lang2": "interaction_child_lang2",
-    "Age_Child_Lang4": "interaction_child_lang4"
+    "Language": "lang",
+    "Language_Tonal": "lang_group",
+    "Age_Child_Language_Tonal": "interaction_child_lang2",
+    "Age_Child_Language": "interaction_child_lang4"
 }
 
 ALL_BANDS = ["delta", "theta", "alpha", "beta", "highbeta", "gamma"]
@@ -140,10 +142,14 @@ def prepare_task_data(df, task_key, target_col):
     if target_col not in df_task.columns:
         if task_key == "Age_Group" and "age_group" in df_task.columns:
             target_col = "age_group"
-        elif task_key in ["Age_Child_Lang2", "Age_Child_Lang4"]:
+        elif task_key == "Language_Tonal" and "lang_group" in df_task.columns:
+            target_col = "lang_group"
+        elif task_key == "Language" and "lang" in df_task.columns:
+            target_col = "lang"
+        elif task_key in ["Age_Child_Language", "Age_Child_Language_Tonal"]:
             if "age_group" in df_task.columns and "lang" in df_task.columns:
                 df_task = df_task[df_task["age_group"].isin(["5-7", "8-12"])]
-                if task_key == "Age_Child_Lang2":
+                if task_key == "Age_Child_Language_Tonal":
                     def map_lang2(l):
                         s = str(l).upper()
                         return "C" if any(k in s for k in ["C", "ZH", "MANDARIN"]) else "NC"
