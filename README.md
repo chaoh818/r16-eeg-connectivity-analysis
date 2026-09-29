@@ -1,678 +1,184 @@
-# r16-eeg-connectivity-analysis
-EEG coherence connectivity analysis pipeline for R16 .conn files.
-====================================
-
-1. QUICK SUMMARY
-----------------
-
-This project contains the EEG connectivity analysis pipeline for the R16 BESA .conn files.
-
-The pipeline does the following:
-
-- Reads EEG coherence .conn files from three stimulus conditions: gu1, gu2, and gu3.
-- Extracts band-averaged coherence features from six frequency bands:
-  delta, theta, alpha, beta, high beta, and gamma.
-- Converts each participant-condition .conn file into channel-pair connectivity features.
-- Merges EEG features with participant metadata from R16 Participant information.xlsx.
-- Runs binary classification tasks for language group and age group.
-- Compares Linear SVM, Random Forest, and Elastic Net models.
-- Evaluates models using stratified 5-fold cross-validation.
-- Runs 1000-permutation tests for the best models.
-- Runs Elastic Net survived-feature analysis for the two best Elastic Net models.
-- Generates a final Excel summary workbook and figures.
-
-Final main outputs:
-
-- outputs/R16_EEG_analysis_summary.xlsx
-- outputs/figures/
-- outputs/bandwise_results_all_conditions.csv
-- outputs/permutation_results_best_models.csv
-- outputs/survived_features_task_summary.csv
-
-
-2. WHAT WAS ANALYSED
---------------------
-
-2.1 Stimulus Conditions
-
-The analysis used three stimulus conditions:
-
-Condition    Description
----------    -----------
-gu1          Stimulus condition 1
-gu2          Stimulus condition 2
-gu3          Stimulus condition 3
-
-Each condition folder contains BESA .conn files. EEG coherence features were extracted separately for each condition.
-
-
-2.2 Frequency Bands
-
-For each participant and condition, coherence features were extracted from these frequency bands:
-
-Band         Frequency range
-----         ----------------
-delta        2-4 Hz
-theta        4-8 Hz
-alpha        8-12 Hz
-beta         12-25 Hz
-high beta    25-30 Hz
-gamma        30-40 Hz
-
-An additional all-band setting was also tested by combining all six frequency bands.
-
-
-2.3 Classification Tasks
-
-Three binary classification tasks were performed:
-
-Task                      Positive class    Negative class    Purpose
-----                      --------------    --------------    -------
-Language C vs Others      C                 Others            Test whether EEG coherence features distinguish the C language group from all non-C groups.
-Language C vs S           C                 S                 Test a cleaner pairwise language comparison between C and S groups.
-Age 8-12 vs 5-7           8-12              5-7               Test whether EEG coherence features distinguish older children from younger children.
-
-
-2.4 Models Compared
-
-Three machine learning models were compared:
-
-Model            Notes
------            -----
-Linear SVM       Linear support vector machine with balanced class weights.
-Random Forest    500-tree random forest with balanced class weights.
-Elastic Net      Logistic regression with Elastic Net regularisation.
-
-The main model comparison used stratified 5-fold cross-validation.
-
-The main evaluation metrics were:
-
-- AUC
-- Accuracy
-- Sensitivity
-- Specificity
-
-
-3. MAIN RESULTS
----------------
-
-The best results were:
-
-Task                    Best setting                    AUC      Permutation p-value
-----                    ------------                    ---      -------------------
-Language C vs Others    gu2 alpha Elastic Net            0.771    0.001
-Age 8-12 vs 5-7         gu2 alpha Elastic Net            0.754    0.006
-Language C vs S         gu3 delta Linear SVM             0.740    0.012
-
-Main interpretation:
-
-- The strongest overall result was Language C vs Others using gu2 alpha-band coherence features with Elastic Net.
-- The best age classification result was also obtained using gu2 alpha-band coherence features with Elastic Net.
-- The cleaner C vs S language comparison showed a different pattern: gu3 delta-band features with Linear SVM performed best.
-- The results suggest that useful classification information is condition-specific and frequency-band-specific.
-- Combining all bands together was generally less effective than using selected frequency bands.
-
-
-4. PROJECT STRUCTURE
---------------------
-
-Expected folder structure:
-
-R16_EEG_analysis/
-  data/
-    gu1/
-    gu2/
-    gu3/
-  meta/
-    R16 Participant information.xlsx
-  outputs/
-  scripts/
-  01_check_conn_file.ipynb
-  02_train_language_models_gu3.py
-  02b_train_language_C_vs_S_gu3.py
-  03_train_age_models_gu3.py
-  04_compare_bands_gu3.py
-  05_extract_all_conditions.py
-  06_compare_bands_all_conditions.py
-  07_permutation_test_best_models.py
-  08_survived_features_elasticnet.py
-  09_compile_results_summary.py
-  10_make_visualizations.py
-  README.txt
-
-Main output folder:
-
-outputs/
-
-Figure output folder:
-
-outputs/figures/
-
-
-5. INPUT DATA
--------------
-
-5.1 EEG Connectivity Files
-
-The raw EEG connectivity files are BESA .conn files stored under:
-
-data/gu1/
-data/gu2/
-data/gu3/
-
-Each .conn file contains coherence decomposition data for one participant under one stimulus condition.
-
-Each file includes the following structure:
-
-NumberTimeSamples = 31
-NumberFrequencies = 39
-NumberChannels = 15
-FreqStartInHz = 2
-FreqIntervalInHz = 1
-
-This corresponds to:
-
-31 time samples x 39 frequency bins x 15 channels x 15 channels
-
-The frequency range is 2-40 Hz.
-
-The 15 channels are parsed directly from the .conn file header.
-
-
-5.2 Metadata File
-
-Participant metadata are stored in:
-
-meta/R16 Participant information.xlsx
-
-The metadata file contains participant-level information, including:
-
-- Participant ID
-- Language group
-- Date of birth
-- Date of test
-- Language background
-- Music background
-- TONI scores
-- PPVT scores
-- TVIP scores
-
-
-6. PIPELINE
------------
-
-The pipeline is organised into six main steps.
-
-
-6.1 Step 1: Feature Extraction and Metadata Merge
-
-Script:
-
-python 05_extract_all_conditions.py
-
-Purpose:
-
-This script reads all .conn files from gu1, gu2, and gu3, extracts EEG coherence features, and merges them with participant metadata.
-
-For each .conn file, the script:
-
-1. Reads the file header.
-2. Extracts time sample, frequency, channel, and channel-label information.
-3. Extracts the numerical coherence values.
-4. Reshapes the data into:
-
-   time x frequency x channel x channel
-
-5. Averages coherence values across time.
-6. Computes band-averaged coherence matrices.
-7. Extracts upper-triangular channel-pair features.
-8. Merges EEG features with participant metadata.
-
-Feature dimension:
-
-- There are 15 EEG channels.
-- For each band, the number of unique channel-pair features is:
-
-  15 x 14 / 2 = 105
-
-- Across six frequency bands, each participant-condition file has:
-
-  105 x 6 = 630 EEG coherence features
-
-Main outputs:
-
-outputs/X_conn_gu1.csv
-outputs/X_conn_gu2.csv
-outputs/X_conn_gu3.csv
-
-outputs/dataset_gu1.csv
-outputs/dataset_gu2.csv
-outputs/dataset_gu3.csv
-
-outputs/dataset_lang_gu1.csv
-outputs/dataset_lang_gu2.csv
-outputs/dataset_lang_gu3.csv
-
-outputs/dataset_age_5-7_vs_8-12_gu1.csv
-outputs/dataset_age_5-7_vs_8-12_gu2.csv
-outputs/dataset_age_5-7_vs_8-12_gu3.csv
-
-
-6.2 Step 2: Model Comparison Across Conditions and Bands
-
-Script:
-
-python 06_compare_bands_all_conditions.py
-
-Purpose:
-
-This script compares classification performance across:
-
-- Three conditions: gu1, gu2, gu3
-- Seven band settings: delta, theta, alpha, beta, high beta, gamma, all
-- Three models: Linear SVM, Random Forest, Elastic Net
-- Three tasks: Language C vs Others, Language C vs S, Age 8-12 vs 5-7
-
-Models:
-
-1. Linear SVM
-   - kernel = linear
-   - class_weight = balanced
-   - probability = True
-   - StandardScaler used before the model
-
-2. Random Forest
-   - n_estimators = 500
-   - max_features = sqrt
-   - class_weight = balanced
-
-3. Elastic Net logistic regression
-   - penalty = elasticnet
-   - solver = saga
-   - l1_ratio = 0.5
-   - C = 1.0
-   - class_weight = balanced
-   - max_iter = 20000
-   - StandardScaler used before the model
-
-Evaluation:
-
-- Stratified 5-fold cross-validation
-- Accuracy
-- AUC
-- Sensitivity
-- Specificity
-
-AUC was used as the main model-selection metric.
-
-Main outputs:
-
-outputs/bandwise_results_all_conditions.csv
-outputs/bandwise_best_results_all_conditions.csv
-outputs/bandwise_best_overall_by_task.csv
-
-
-6.3 Step 3: Permutation Testing
-
-Script:
-
-python 07_permutation_test_best_models.py
-
-Purpose:
-
-This script tests whether the best model AUC values are significantly higher than random-label performance.
-
-Method:
-
-1. Compute the true cross-validated AUC using the original labels.
-2. Randomly shuffle the labels.
-3. Recompute cross-validated AUC with shuffled labels.
-4. Repeat the process 1000 times.
-5. Build a null distribution of permutation AUC values.
-6. Calculate a p-value.
-
-P-value formula with add-one correction:
-
-p = (number of permutation AUCs >= true AUC + 1) / (number of permutations + 1)
-
-Best models tested:
-
-Task                    Condition    Band     Model
-----                    ---------    ----     -----
-Age 8-12 vs 5-7         gu2          alpha    Elastic Net
-Language C vs Others    gu2          alpha    Elastic Net
-Language C vs S         gu3          delta    Linear SVM
-
-Main outputs:
-
-outputs/permutation_results_best_models.csv
-outputs/permutation_distribution_age_8-12_vs_5-7_gu2_alpha_ElasticNet.csv
-outputs/permutation_distribution_language_C_vs_Others_gu2_alpha_ElasticNet.csv
-outputs/permutation_distribution_language_C_vs_S_gu3_delta_SVM_linear.csv
-
-
-6.4 Step 4: Elastic Net Survived-Feature Analysis
-
-Script:
-
-python 08_survived_features_elasticnet.py
-
-Purpose:
-
-This script identifies stable channel-pair features selected by Elastic Net across cross-validation folds.
-
-This analysis was applied to the two best Elastic Net models:
-
-Task                    Condition    Band     Model
-----                    ---------    ----     -----
-Language C vs Others    gu2          alpha    Elastic Net
-Age 8-12 vs 5-7         gu2          alpha    Elastic Net
-
-Method:
-
-1. Run 5-fold cross-validation.
-2. Train Elastic Net on each fold.
-3. Extract the coefficient for each feature in each fold.
-4. Mark a feature as selected if its coefficient is non-zero.
-5. Count how often each feature is selected across the 5 folds.
-6. Define survived features as features selected in at least 4 out of 5 folds.
-
-Survival threshold:
-
-survival_count >= 4
-
-Output fields include:
-
-- feature
-- channel_pair
-- survival_count
-- survival_rate
-- mean_coefficient
-- mean_abs_coefficient
-- direction
-
-Direction interpretation:
-
-For Language C vs Others:
-
-- positive coefficient = towards C
-- negative coefficient = towards Others
-
-For Age 8-12 vs 5-7:
-
-- positive coefficient = towards 8-12
-- negative coefficient = towards 5-7
-
-Main outputs:
-
-outputs/elasticnet_all_fold_coefficients_language_C_vs_Others_gu2_alpha_ElasticNet.csv
-outputs/elasticnet_feature_summary_language_C_vs_Others_gu2_alpha_ElasticNet.csv
-outputs/survived_features_language_C_vs_Others_gu2_alpha_ElasticNet.csv
-
-outputs/elasticnet_all_fold_coefficients_age_8-12_vs_5-7_gu2_alpha_ElasticNet.csv
-outputs/elasticnet_feature_summary_age_8-12_vs_5-7_gu2_alpha_ElasticNet.csv
-outputs/survived_features_age_8-12_vs_5-7_gu2_alpha_ElasticNet.csv
-
-outputs/survived_features_task_summary.csv
-
-
-6.5 Step 5: Compile Excel Summary
-
-Script:
-
-python 09_compile_results_summary.py
-
-Purpose:
-
-This script compiles the main outputs into a formatted Excel workbook.
-
-Main output:
-
-outputs/R16_EEG_analysis_summary.xlsx
-
-Workbook sheets:
-
-Sheet name                  Content
-----------                  -------
-00_Key_Findings             Main findings and interpretations
-01_Best_Results             Final best-result table
-02_Executive_Summary        Compact model and permutation summary
-03_Dataset_Counts           Dataset and metadata counts
-04_Best_Overall             Best models by task
-05_Best_By_Condition        Best results by task and condition
-06_Permutation_Tests        1000-permutation test results
-07_Survived_Summary         Survived-feature counts
-08_Survived_Language        Language survived features
-09_Survived_Age             Age survived features
-10_All_Bandwise_Results     Full band-wise model results
-
-Most useful sheets for quick review:
-
-- 00_Key_Findings
-- 01_Best_Results
-- 03_Dataset_Counts
-- 06_Permutation_Tests
-- 08_Survived_Language
-- 09_Survived_Age
-
-
-6.6 Step 6: Generate Figures
-
-Script:
-
-python 10_make_visualizations.py
-
-Purpose:
-
-This script creates the final figure folder and generates visual summaries.
-
-Main output folder:
-
-outputs/figures/
-
-Generated figures:
-
-00_best_results_table.png
-01_best_model_auc_summary.png
-02_bandwise_language_C_vs_Others_auc_ElasticNet.png
-03_bandwise_age_8-12_vs_5-7_auc_ElasticNet.png
-04_bandwise_language_C_vs_S_auc_LinearSVM.png
-05_permutation_language_C_vs_Others_gu2_alpha_ElasticNet.png
-05_permutation_age_8-12_vs_5-7_gu2_alpha_ElasticNet.png
-05_permutation_language_C_vs_S_gu3_delta_SVM_linear.png
-06_survived_language_top10_abs.png
-07_survived_age_top10_abs.png
-08_survived_language_direction.png
-09_survived_age_direction.png
-
-Most useful figures for presentation:
-
-- 00_best_results_table.png
-- 01_best_model_auc_summary.png
-- 02_bandwise_language_C_vs_Others_auc_ElasticNet.png
-- 03_bandwise_age_8-12_vs_5-7_auc_ElasticNet.png
-- 04_bandwise_language_C_vs_S_auc_LinearSVM.png
-- 05_permutation_language_C_vs_Others_gu2_alpha_ElasticNet.png
-- 05_permutation_age_8-12_vs_5-7_gu2_alpha_ElasticNet.png
-- 05_permutation_language_C_vs_S_gu3_delta_SVM_linear.png
-- 08_survived_language_direction.png
-- 09_survived_age_direction.png
-
-
-7. HOW TO RUN THE FULL PIPELINE
--------------------------------
-
-Run the scripts in this order:
-
-Step 1: Extract features and merge metadata
-
-python 05_extract_all_conditions.py
-
-Step 2: Compare conditions, bands, tasks, and models
-
-python 06_compare_bands_all_conditions.py
-
-Step 3: Run permutation tests
-
-python 07_permutation_test_best_models.py
-
-Step 4: Run Elastic Net survived-feature analysis
-
-python 08_survived_features_elasticnet.py
-
-Step 5: Compile Excel summary
-
-python 09_compile_results_summary.py
-
-Step 6: Generate figures
-
-python 10_make_visualizations.py
-
-The order is important because later scripts depend on output files generated by earlier scripts.
-
-
-8. DETAILED RESULTS
--------------------
-
-8.1 Best Model Results
-
-Task                    Best condition    Best band    Best model     AUC      Permutation p-value
-----                    --------------    ---------    ----------     ---      -------------------
-Language C vs Others    gu2               alpha        Elastic Net    0.771    0.001
-Age 8-12 vs 5-7         gu2               alpha        Elastic Net    0.754    0.006
-Language C vs S         gu3               delta        Linear SVM     0.740    0.012
-
-
-8.2 Language C vs Others
-
-Best setting:
-
-- Condition: gu2
-- Band: alpha
-- Model: Elastic Net
-- AUC: approximately 0.771
-- Permutation p-value: approximately 0.001
-
-Interpretation:
-
-This was the strongest overall result. It suggests that gu2 alpha-band coherence features contain useful information for distinguishing C participants from non-C participants.
-
-
-8.3 Age 8-12 vs 5-7
-
-Best setting:
-
-- Condition: gu2
-- Band: alpha
-- Model: Elastic Net
-- AUC: approximately 0.754
-- Permutation p-value: approximately 0.006
-
-Interpretation:
-
-This suggests that gu2 alpha-band coherence features also contain useful information for distinguishing older children from younger children.
-
-
-8.4 Language C vs S
-
-Best setting:
-
-- Condition: gu3
-- Band: delta
-- Model: Linear SVM
-- AUC: approximately 0.740
-- Permutation p-value: approximately 0.012
-
-Interpretation:
-
-The cleaner C vs S language contrast showed a different best condition-band combination compared with C vs Others. The best model used gu3 delta-band features with Linear SVM.
-
-
-8.5 Survived Features
-
-Elastic Net survived-feature analysis produced:
-
-Task                    Condition    Band     Model          Survived features
-----                    ---------    ----     -----          -----------------
-Language C vs Others    gu2          alpha    Elastic Net    16
-Age 8-12 vs 5-7         gu2          alpha    Elastic Net    14
-
-Interpretation:
-
-These features are channel-pair coherence values that were repeatedly selected by Elastic Net across cross-validation folds.
-
-
-9. KEY FINDINGS
----------------
-
-1. Band-wise features were more informative than all-band combined features.
-
-   The strongest results were found in specific frequency bands rather than by combining all frequency bands into one large feature set.
-
-2. gu2 alpha-band coherence was the most important setting for two tasks.
-
-   Both Language C vs Others and Age 8-12 vs 5-7 achieved their best performance with gu2 alpha-band features using Elastic Net.
-
-3. C vs S showed a different pattern.
-
-   The best C vs S result used gu3 delta-band features with Linear SVM.
-
-4. The best models were significantly above random-label performance.
-
-   All three selected best models passed 1000-permutation testing with p-values below 0.05.
-
-5. Elastic Net identified stable survived features.
-
-   The two gu2 alpha Elastic Net models produced stable survived channel-pair features across 5-fold cross-validation.
-
-
-10. LIMITATIONS
----------------
-
-The current analysis should be interpreted as preliminary because:
-
-1. The sample size is relatively small.
-2. Some participants could not be matched to complete metadata.
-3. The models were evaluated using cross-validation rather than an independent held-out test set.
-4. Hyperparameters were fixed rather than optimised using nested cross-validation.
-5. Survived-feature analysis was based on 5 folds with a 4/5 survival threshold.
-6. The results show classification signal, but they do not establish causal neurophysiological mechanisms.
-
-
-11. POSSIBLE FUTURE IMPROVEMENTS
---------------------------------
-
-Future improvements could include:
-
-1. Completing missing participant metadata.
-2. Running repeated stratified cross-validation.
-3. Using nested cross-validation for hyperparameter tuning.
-4. Testing PCA or feature-reduction approaches.
-5. Running a more stable repeated survived-feature analysis.
-6. Visualising survived channel-pair features as brain-network graphs.
-7. Adding an independent validation set if more data become available.
-
-
-12. SHORT SUMMARY
------------------
-
-This project extracted EEG coherence features from BESA .conn files across three stimulus conditions and six frequency bands. Machine learning models were trained to classify language and age groups using these features.
-
-The strongest results were:
-
-Language C vs Others:
-- gu2 alpha Elastic Net
-- AUC approximately 0.771
-- permutation p approximately 0.001
-
-Age 8-12 vs 5-7:
-- gu2 alpha Elastic Net
-- AUC approximately 0.754
-- permutation p approximately 0.006
-
-Language C vs S:
-- gu3 delta Linear SVM
-- AUC approximately 0.740
-- permutation p approximately 0.012
-
-Overall, the results suggest that EEG coherence classification performance is frequency-band-specific and condition-specific, with gu2 alpha-band coherence showing the strongest signal for both the Language C vs Others task and the Age 8-12 vs 5-7 task.
+# R16 EEG Connectivity & Spectral Power Analysis Pipeline (v2.0)
+
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Pipeline: Validated](https://img.shields.io/badge/Pipeline-Validated-green.svg)](#validated-peak-results)
+
+An end-to-end, reproducible machine learning and statistical pipeline for analyzing **auditory-evoked EEG functional connectivity** (coherence) and **power spectral density (PSD)**. This framework evaluates neurodevelopmental age maturation and linguistic background (tonal vs. non-tonal language processing) across multiple acoustic stimulus conditions and post-stimulus temporal epoch windows.
+
+---
+
+## 🌟 Key Pipeline Features
+
+- **Multimodal Feature Integration**: Combines long-range inter-hemispheric **Functional Connectivity (`FC`)** coherence with local **Power Spectral Density (`PSD`)** oscillatory power.
+- **Dynamic Time-Window Optimization**: Evaluates sensory gating (`0–300ms`), mid-latency phonological integration (`300–600ms`), and late cognitive decay (`400–800ms`) epoch windows.
+- **Acoustic Stimulus Selectivity**: Compares neural responses across three distinct auditory conditions (`gu1`, `gu2`, `gu3`).
+- **Rigorous Cross-Validation**: Uses Stratified 5-Fold Cross-Validation with inner-fold feature scaling (`StandardScaler`) to prevent data leakage.
+- **Statistical Significance**: Computes empirical $p$-values via 1,000-run shuffled label permutation testing.
+- **L1 Survived Feature Extraction**: Identifies stable, non-zero channel-pair and spectral pathways selected by Elastic Net logistic regression across $\ge 80\%$ ($\ge 4/5$) of CV folds.
+- **Publication-Ready Outputs**: Automatically compiles structured Excel workbooks (`R16_EEG_analysis_summary.xlsx`) and high-resolution 300 DPI figures.
+
+---
+
+## 🎯 Classification Tasks & Validated Peak Performance
+
+| Classification Task Target | Target Type | Classes | Chance Baseline | Peak Model AUC | Model Accuracy | Gain Above Chance | Peak Configuration (Condition \| Window \| Band \| Mode \| Model) |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :--- |
+| **`Age_Group`** | Lifespan Maturation | 4 | 25.0% | **0.724** | **44.0%** | **+19.0 pp** | `gu2` \| `0–800ms` \| Beta \| PSD \| Elastic Net |
+| **`Language_Tonal`** | Binary Language Contrast | 2 | 50.0% | **0.701** | **68.0%** | **+18.0 pp** | `gu2` \| `400–800ms` \| Delta \| FC \| Random Forest |
+| **`Age_Child_Language`** | Child Multiclass Interaction | 6 | 16.7% | **0.651** | **23.7%** | **+7.0 pp** | `gu3` \| `300–600ms` \| Delta \| PSD \| Random Forest |
+| **`Language`** | 4-Class Language Cohorts | 4 | 25.0% | **0.649** | **43.3%** | **+18.3 pp** | `gu2` \| `0–300ms` \| Full Spectrum \| FC / PSD_FC \| Linear SVM |
+| **`Age_Child_Language_Tonal`** | Child Tonal Interaction | 4 | 25.0% | **0.644** | **36.4%** | **+11.4 pp** | `gu1` \| `300–600ms` \| Delta \| PSD \| Random Forest |
+
+---
+
+## 🔄 End-to-End Pipeline Workflow
+
+The repository is organized into a modular execution chain:
+
+```
+[Script 05 / 06] Cross-Validated Model Evaluation across Bands, Conditions, & Time Windows
+                 (Outputs: dataset_{cond}_{start}_{end}.csv, multiclass_results_all_conditions_{start}_{end}.csv)
+       │
+       ▼
+[Script 065] Time-Window Optimization & Best Model Selection
+             (Groups by [Task, Condition], picks max AUC across windows/modes; outputs multiclass_best_results_all_conditions.csv)
+       │
+       ▼
+ ┌─────┴─────────────────────────────────────────┐
+ │                                               │
+ ▼                                               ▼
+[Script 07] Permutation Testing             [Script 08] Survived Feature Extraction
+(1,000 label shuffles -> p-values)          (Elastic Net fold selection >= 4/5)
+ │                                               │
+ └───────────────────────┬───────────────────────┘
+                         │
+                         ▼
+            [Script 09] Master Excel Compiler
+            (Generates R16_EEG_analysis_summary.xlsx with 11 sheets)
+                         │
+                         ▼
+            [Script 10] Publication Visualization Suite
+            (Generates 9 high-res PNG charts under outputs/figures/)
+```
+
+### Script Architecture & Responsibilities
+
+1. **`05_build_task_datasets.py` & `06_compare_bands_all_conditions_multiclass.py`**:
+   - Takes `--start_time` and `--end_time` CLI arguments (e.g., `--start_time 0 --end_time 300`).
+   - Extracts target variables (`Age_Group`, `Language_Tonal`, `Language`, `Age_Child_Language_Tonal`, `Age_Child_Language`).
+   - Saves window-tagged datasets (`dataset_gu3_300_600.csv`) and performance metrics (`multiclass_results_all_conditions_300_600.csv`).
+
+2. **`065_select_best_windows.py`**:
+   - Bridge script that scans all window-specific performance CSVs.
+   - Groups results by `[Task, Condition]` and extracts the global peak configuration by max `AUC_mean`.
+   - Saves `multiclass_best_results_all_conditions.csv` carrying the winning `Window` attribute.
+
+3. **`07_permutation_test_multiclass.py`**:
+   - Resolves window-specific dataset paths (`dataset_{cond}_{start}_{end}.csv`).
+   - Runs 1,000 iterations of shuffled-label cross-validation to construct empirical null distributions and calculate $p$-values ($p < 0.05$).
+
+4. **`08_survived_features_multiclass.py`**:
+   - Dynamically constructs task target vectors (`Age_Group`, `Language`, `Age_Child_Language`).
+   - Fits SAGA Elastic Net models per fold and isolates stable "survived features" selected in $\ge 4/5$ folds.
+   - Outputs `multiclass_survived_features_task_summary.csv`.
+
+5. **`09_compile_results_summary.py`**:
+   - Compiles all metrics, demographics, permutation results, and feature summaries into `R16_EEG_analysis_summary.xlsx`.
+   - Formatted across 11 professional sheets with custom navy styling, zebra striping, and auto-adjusted column widths.
+
+6. **`10_make_visualizations.py`**:
+   - Generates 9 publication-grade figures saved to `outputs/figures/`:
+     - **`00_best_results_table.png`**: High-resolution table displaying all condition results and highlighting the peak condition per task.
+     - **`01_best_model_auc_summary.png`**: Grouped bar chart comparing `gu1`, `gu2`, and `gu3` with star callouts on peak configurations.
+     - **`02_bandwise_auc_trajectory.png`**: Coherence trajectories across physiological frequency bands (Delta to Gamma).
+     - **`04a_survived_features_age_group.png`**: Top stable L1 Elastic Net features for lifespan age maturation.
+     - **`04b_survived_features_language_tonal.png`**: Top stable L1 features for binary tonal language processing.
+     - **`04c_survived_features_age_child_language_tonal.png`**: Top stable L1 features for child tonal interaction.
+     - **`05_time_window_scheme_comparison.png`**: Performance across sensory gating (`0–300ms`), mid-latency (`300–600ms`), and late (`400–800ms`) epoch windows.
+     - **`06_feature_mode_synergy.png`**: Comparative gains across `FC`, `PSD`, and multimodal `PSD_FC` feature sets.
+     - **`07_stimulus_condition_selectivity.png`**: Acoustic condition selectivity across task targets.
+     - **`08_task_granularity_tradeoffs.png`**: Single Y-axis plot contrasting model AUC against 0.500 chance baseline across 5 task granularities.
+
+---
+
+## ⚡ Quick Start & Execution Guide
+
+### Prerequisites & Installation
+
+```bash
+# Clone the repository
+git clone https://github.com/chaoh818/r16-eeg-connectivity-analysis.git
+cd r16-eeg-connectivity-analysis
+
+# Create and activate virtual environment
+python3 -m venv venv
+source venv/bin/activate
+
+# Install dependencies
+pip install -r requirements.txt
+```
+
+### Running the Full Pipeline
+
+```bash
+# 1. Run time-window CV evaluations across target windows
+python scripts/06_compare_bands_all_conditions_multiclass.py --start_time 0 --end_time 300
+python scripts/06_compare_bands_all_conditions_multiclass.py --start_time 300 --end_time 600
+python scripts/06_compare_bands_all_conditions_multiclass.py --start_time 400 --end_time 800
+python scripts/06_compare_bands_all_conditions_multiclass.py --start_time 0 --end_time 800
+
+# 2. Optimize and select optimal time windows per [Task, Condition]
+python scripts/065_select_best_windows.py
+
+# 3. Perform 1,000-run permutation significance testing
+python scripts/07_permutation_test_multiclass.py 1000
+
+# 4. Extract L1 Elastic Net survived connectivity/power features
+python scripts/08_survived_features_multiclass.py
+
+# 5. Compile Excel summary workbook
+python scripts/09_compile_results_summary.py
+
+# 6. Generate full figure visualization suite
+python scripts/10_make_visualizations.py
+```
+
+---
+
+## 📂 Repository Layout
+
+```
+r16-eeg-connectivity-analysis/
+├── data/                          # Raw and processed EEG .conn and PSD files
+├── scripts/
+│   ├── 05_build_task_datasets.py
+│   ├── 06_compare_bands_all_conditions_multiclass.py
+│   ├── 065_select_best_windows.py
+│   ├── 07_permutation_test_multiclass.py
+│   ├── 08_survived_features_multiclass.py
+│   ├── 09_compile_results_summary.py
+│   └── 10_make_visualizations.py
+├── outputs/
+│   ├── dataset_gu*.csv             # Window-tagged dataset files
+│   ├── multiclass_*.csv            # Full and best cross-validated result metrics
+│   ├── figures/                    # Generated 300 DPI publication charts (00–08)
+│   └── R16_EEG_analysis_summary.xlsx  # Master 11-sheet Excel analysis workbook
+├── requirements.txt
+├── LICENSE
+└── README.md
+```
+
+---
+
+## 📄 Citation & Attribution
+
+[Tentative] If you use this pipeline or dataset analysis in your research, please cite:
+
+```bibtex
+@article{r16_eeg_connectivity_2026,
+  title={Multimodal EEG Coherence and Spectral Power Dynamics in Auditory-Evoked Maturation and Language Processing},
+  author={R16 EEG Research Group},
+  year={2026}
+}
+```
