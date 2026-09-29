@@ -1,0 +1,2 @@
+Task,feature,descriptor,condition,window,band,feature_mode,target_class,survival_count,survival_rate,mean_coefficient,mean_abs_coefficient,direction
+Age_Child_Language,beta_ACtR_ACaR,ACtR-ACaR,gu2,600-900ms,beta,FC,8-12_A,2,1.0,0.36328570666754356,0.36328570666754356,towards_8-12_A

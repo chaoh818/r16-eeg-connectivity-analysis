@@ -5,27 +5,6 @@ from pathlib import Path
 import argparse
 
 # ============================================================
-# 0. Read command line arguments for start and end time
-# ============================================================
-
-# 1. Initialize the parser
-parser = argparse.ArgumentParser(description="Process EEG time windows.")
-
-# 2. Define the arguments and force them to be integers
-# Using -500 and 1000 as default fallbacks based on your standard epoch
-parser.add_argument("--start_time", type=int, default=-500, help="Start time in milliseconds")
-parser.add_argument("--end_time", type=int, default=1000, help="End time in milliseconds")
-
-# 3. Parse the arguments from the command line
-args = parser.parse_args()
-
-# 4. Access the variables (they are already converted to integers)
-time_start_arg = args.start_time
-time_end_arg = args.end_time
-    
-print(f"Analyzing time window from {time_start_arg}ms to {time_end_arg}ms")
-
-# ============================================================
 # 1. Set paths
 # ============================================================
 
@@ -45,7 +24,6 @@ print("OUTPUT_DIR:", OUTPUT_DIR)
 data_channels = ["ACtL", "ACrL", "ACaL", "ACtR", "ACrR", "ACaR"]
 n_ch_used = len(data_channels)
 
-
 freq_bands = {
         "delta": (2, 4),
         "theta": (4, 8),
@@ -55,8 +33,11 @@ freq_bands = {
         "gamma": (30, 50),
     }
 
+time_start_arg = 0
+time_end_arg = 1000
+
 # ============================================================
-# 2. Helper functions for .conn files
+# Helper functions for .conn files
 # ============================================================
 
 def parse_conn_header(text):
@@ -356,94 +337,116 @@ def read_meta_data_from_conn_file(conn_path):
 
     return row
 
-rows = []
-failed_files = []
-
-search_pattern = "*/Coherence/Complex Demodulation/*/*.conn"
-conn_files = list(base_path.glob(search_pattern))
-for conn_path in conn_files:
-    try:
-        row = read_meta_data_from_conn_file(conn_path)
-        rows.append(row)
-    except Exception as e:
-        failed_files.append((conn_path.name, str(e)))
-
-X_meta_all = pd.DataFrame(rows)
-X_meta = X_meta_all.drop_duplicates(
-    subset=["participant_id"],
-    keep="first"
-).copy()
-
-X_meta.to_csv(OUTPUT_DIR / "metadata_unique_all_conditions.csv", index=False)
-
-# this reads meta file with manual updates
-# X_meta = pd.read_csv(OUTPUT_DIR / "X_meta.csv")
-
-print("\nMetadata prepared.")
-print("Unique metadata shape:", X_meta.shape)
-
-# ============================================================
-# 4. Extract and merge each condition
-# ============================================================
-
-conditions = ["gu1", "gu2", "gu3"]
-
-for condition in conditions:
-    print("\n" + "=" * 80)
-    print("Processing condition:", condition)
+def main():
+    print(f"Analyzing time window from {time_start_arg}ms to {time_end_arg}ms")
 
     rows = []
     failed_files = []
 
-    search_pattern = f"*/Coherence/Complex Demodulation/{condition}/*.conn"
+    search_pattern = "*/Coherence/Complex Demodulation/*/*.conn"
     conn_files = list(base_path.glob(search_pattern))
-    print(f"Number of valid {condition} .conn files:", len(conn_files))
-
     for conn_path in conn_files:
         try:
-            row = read_conn_file_to_features(conn_path, condition)
+            row = read_meta_data_from_conn_file(conn_path)
             rows.append(row)
         except Exception as e:
             failed_files.append((conn_path.name, str(e)))
 
-    X_conn = pd.DataFrame(rows)
+    X_meta_all = pd.DataFrame(rows)
+    X_meta = X_meta_all.drop_duplicates(
+        subset=["participant_id"],
+        keep="first"
+    ).copy()
 
-    print("Successfully processed:", len(rows))
-    print("Failed files:", len(failed_files))
-    print("X_conn shape:", X_conn.shape)
+    X_meta.to_csv(OUTPUT_DIR / "metadata_unique_all_conditions.csv", index=False)
 
-    if failed_files:
-        print("\nFailed files:")
-        for name, err in failed_files:
-            print(name, "->", err)
+    # this reads meta file with manual updates
+    # X_meta = pd.read_csv(OUTPUT_DIR / "X_meta.csv")
 
-    # Save feature table
-    x_path = OUTPUT_DIR / f"X_conn_{condition}.csv"
-    X_conn.to_csv(x_path, index=False)
+    print("\nMetadata prepared.")
+    print("Unique metadata shape:", X_meta.shape)
 
-    # Merge metadata
-    dataset = X_conn.merge(
-        X_meta,
-        on="participant_id",
-        how="left",
-        suffixes=("_conn", "_meta")
-    )
+    # ============================================================
+    # 4. Extract and merge each condition
+    # ============================================================
 
-    dataset_path = OUTPUT_DIR / f"dataset_{condition}.csv"
-    dataset.to_csv(dataset_path, index=False)
+    conditions = ["gu1", "gu2", "gu3"]
 
-    missing_meta = dataset[dataset["lang"].isna()]
+    for condition in conditions:
+        print("\n" + "=" * 80)
+        print("Processing condition:", condition)
 
-    print("Saved:", x_path)
-    print("Saved:", dataset_path)
+        rows = []
+        failed_files = []
 
-    print("\nMerged dataset shape:", dataset.shape)
-    print("Rows without lang metadata:", missing_meta.shape[0])
+        search_pattern = f"*/Coherence/Complex Demodulation/{condition}/*.conn"
+        conn_files = list(base_path.glob(search_pattern))
+        print(f"Number of valid {condition} .conn files:", len(conn_files))
 
-    print("\nLanguage counts:")
-    print(dataset["lang"].value_counts(dropna=False))
+        for conn_path in conn_files:
+            try:
+                row = read_conn_file_to_features(conn_path, condition)
+                rows.append(row)
+            except Exception as e:
+                failed_files.append((conn_path.name, str(e)))
 
-    print("\nAge group counts:")
-    print(dataset["age_group"].value_counts(dropna=False))
+        X_conn = pd.DataFrame(rows)
 
-print("\nAll conditions processed.")
+        print("Successfully processed:", len(rows))
+        print("Failed files:", len(failed_files))
+        print("X_conn shape:", X_conn.shape)
+
+        if failed_files:
+            print("\nFailed files:")
+            for name, err in failed_files:
+                print(name, "->", err)
+
+        # Save feature table
+        x_path = OUTPUT_DIR / f"X_conn_{condition}.csv"
+        X_conn.to_csv(x_path, index=False)
+
+        # Merge metadata
+        dataset = X_conn.merge(
+            X_meta,
+            on="participant_id",
+            how="left",
+            suffixes=("_conn", "_meta")
+        )
+
+        dataset_path = OUTPUT_DIR / f"dataset_{condition}_{time_start_arg}_{time_end_arg}.csv"
+        dataset.to_csv(dataset_path, index=False)
+
+        missing_meta = dataset[dataset["lang"].isna()]
+
+        print("Saved:", x_path)
+        print("Saved:", dataset_path)
+
+        print("\nMerged dataset shape:", dataset.shape)
+        print("Rows without lang metadata:", missing_meta.shape[0])
+
+        print("\nLanguage counts:")
+        print(dataset["lang"].value_counts(dropna=False))
+
+        print("\nAge group counts:")
+        print(dataset["age_group"].value_counts(dropna=False))
+
+    print("\nAll conditions processed.")
+
+
+if __name__ == "__main__":
+    # 1. Initialize the parser
+    parser = argparse.ArgumentParser(description="Process EEG time windows.")
+
+    # 2. Define the arguments and force them to be integers
+    # Using -500 and 1000 as default fallbacks based on your standard epoch
+    parser.add_argument("--start_time", type=int, default=-500, help="Start time in milliseconds")
+    parser.add_argument("--end_time", type=int, default=1000, help="End time in milliseconds")
+
+    # 3. Parse the arguments from the command line
+    args = parser.parse_args()
+
+    # 4. Access the variables (they are already converted to integers)
+    time_start_arg = args.start_time
+    time_end_arg = args.end_time
+    main()
+    

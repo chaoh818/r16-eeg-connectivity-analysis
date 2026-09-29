@@ -1,0 +1,10 @@
+Task,feature,descriptor,condition,window,band,feature_mode,target_class,survival_count,survival_rate,mean_coefficient,mean_abs_coefficient,direction
+Language,alpha_ACtL_ACaL,ACtL-ACaL,gu3,400-800ms,alpha,FC,A,5,1.0,0.9589172409354967,0.9589172409354967,towards_A
+Language,alpha_ACrL_ACrR,ACrL-ACrR,gu3,400-800ms,alpha,FC,A,5,1.0,-0.6804670965650035,0.6804670965650035,towards_others
+Language,alpha_ACaL_ACtR,ACaL-ACtR,gu3,400-800ms,alpha,FC,A,4,0.8,0.6647866695626066,0.6647866695626066,towards_A
+Language,alpha_ACtL_ACaR,ACtL-ACaR,gu3,400-800ms,alpha,FC,A,4,0.8,-0.4160100803029536,0.4160100803029536,towards_others
+Language,alpha_ACtR_ACaR,ACtR-ACaR,gu3,400-800ms,alpha,FC,A,4,0.8,-0.4126140014539441,0.4126140014539441,towards_others
+Language,alpha_ACrL_ACtR,ACrL-ACtR,gu3,400-800ms,alpha,FC,A,5,1.0,-0.4086445802759563,0.4086445802759563,towards_others
+Language,alpha_ACaL_ACrR,ACaL-ACrR,gu3,400-800ms,alpha,FC,A,4,0.8,0.35921850726686466,0.35921850726686466,towards_A
+Language,alpha_ACtL_ACrL,ACtL-ACrL,gu3,400-800ms,alpha,FC,A,4,0.8,0.30326373033209764,0.30326373033209764,towards_A
+Language,alpha_ACrR_ACaR,ACrR-ACaR,gu3,400-800ms,alpha,FC,A,4,0.8,-0.20164382694039812,0.25127688155510053,towards_others

@@ -1,0 +1,5 @@
+Task,feature,descriptor,condition,window,band,feature_mode,target_class,survival_count,survival_rate,mean_coefficient,mean_abs_coefficient,direction
+Age_Group,beta_ACrL_ACaR,ACrL-ACaR,gu2,0-800ms,beta,PSD,Adult,4,0.8,-0.31307387863439634,0.31307387863439634,towards_others
+Age_Group,beta_ACtL_ACrL,ACtL-ACrL,gu2,0-800ms,beta,PSD,Adult,4,0.8,-0.28713522240283273,0.28713522240283273,towards_others
+Age_Group,beta_ACrR_ACaR,ACrR-ACaR,gu2,0-800ms,beta,PSD,Adult,5,1.0,-0.25415698415662585,0.25415698415662585,towards_others
+Age_Group,beta_ACtL_ACaR,ACtL-ACaR,gu2,0-800ms,beta,PSD,Adult,5,1.0,-0.1932372738996306,0.1932372738996306,towards_others

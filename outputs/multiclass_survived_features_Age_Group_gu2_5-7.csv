@@ -1,0 +1,2 @@
+Task,feature,descriptor,condition,window,band,feature_mode,target_class,survival_count,survival_rate,mean_coefficient,mean_abs_coefficient,direction
+Age_Group,beta_ACrL_ACaR,ACrL-ACaR,gu2,0-800ms,beta,PSD,5-7,5,1.0,0.621296513493413,0.621296513493413,towards_5-7

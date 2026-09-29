@@ -1,0 +1,4 @@
+Task,feature,descriptor,condition,window,band,feature_mode,target_class,survival_count,survival_rate,mean_coefficient,mean_abs_coefficient,direction
+Age_Group,beta_ACrR_ACaR,ACrR-ACaR,gu2,0-800ms,beta,PSD,8-12,4,0.8,0.2478766518575636,0.2478766518575636,towards_8-12
+Age_Group,beta_ACtL_ACaL,ACtL-ACaL,gu2,0-800ms,beta,PSD,8-12,5,1.0,0.1626659796849961,0.1626659796849961,towards_8-12
+Age_Group,beta_ACtL_ACrL,ACtL-ACrL,gu2,0-800ms,beta,PSD,8-12,4,0.8,0.14687997757084553,0.14687997757084553,towards_8-12

@@ -1,0 +1,6 @@
+Task,feature,descriptor,condition,window,band,feature_mode,target_class,survival_count,survival_rate,mean_coefficient,mean_abs_coefficient,direction
+Age_Child_Language,beta_ACrR_ACaR,ACrR-ACaR,gu2,600-900ms,beta,FC,5-7_S,2,1.0,-0.3915285309057087,0.3915285309057087,towards_others
+Age_Child_Language,beta_ACaL_ACrR,ACaL-ACrR,gu2,600-900ms,beta,FC,5-7_S,2,1.0,-0.08643424873032604,0.13111462945380556,towards_others
+Age_Child_Language,beta_ACrL_ACaR,ACrL-ACaR,gu2,600-900ms,beta,FC,5-7_S,2,1.0,0.12602770595338753,0.12602770595338753,towards_5-7_S
+Age_Child_Language,beta_ACaL_ACaR,ACaL-ACaR,gu2,600-900ms,beta,FC,5-7_S,2,1.0,-0.03678643862835869,0.12353175262884149,towards_others
+Age_Child_Language,beta_ACaL_ACtR,ACaL-ACtR,gu2,600-900ms,beta,FC,5-7_S,2,1.0,-0.040193717366653746,0.07998134374032334,towards_others

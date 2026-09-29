@@ -1,346 +1,296 @@
-from pathlib import Path
-import warnings
-import re
+#!/usr/bin/env python3
+"""
+08_survived_features_elasticnet.py
+----------------------------------
+Identifies stable brain features (Power Spectral Density and Functional Connectivity
+coherence channel-pairs) selected by Multiclass Elastic Net across cross-validation folds.
 
+Dynamic Target Resolution:
+- Age_Group: 'age_group'
+- Language_Tonal: 'lang_tonal' (C vs. NC)
+- Language: 'lang' (A, C, E, S)
+- Age_Child_Language_Tonal: 4-class child interaction ('5-7_C', '5-7_NC', '8-12_C', '8-12_NC')
+- Age_Child_Language: 6-class child interaction ('5-7_C', '5-7_E', '5-7_S', '8-12_C', '8-12_E', '8-12_S')
+
+Window-Aware Dataset Resolution:
+Matches files in formats like 'dataset_gu3_400_800.csv', 'dataset_gu2_0_300.csv', 'dataset_gu1_300_600.csv'.
+"""
+
+import os
+import sys
 import numpy as np
 import pandas as pd
-
 from sklearn.model_selection import StratifiedKFold
-from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LogisticRegression
-
-
-# ============================================================
-# 1. Settings
-# ============================================================
+import warnings
+warnings.filterwarnings('ignore')
+from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
 if BASE_DIR.name == "scripts":
     BASE_DIR = BASE_DIR.parent
+DATA_DIR = BASE_DIR / "data"
 OUTPUT_DIR = BASE_DIR / "outputs"
+OUTPUT_DIR.mkdir(exist_ok=True)
+INPUT_DIR = OUTPUT_DIR
+base_path = Path(DATA_DIR).expanduser()
 
-RANDOM_STATE = 42
-N_SPLITS = 5
-SURVIVAL_THRESHOLD = 4  # survived if selected in >= 4/5 folds
+def resolve_dataset_path(input_dir, condition, window_str):
+    """Locates dataset CSV files formatted as 'dataset_{condition}_{start}_{end}.csv'."""
+    window_clean = str(window_str).replace("-", "_").replace("ms", "").replace(" ", "").strip()
+    window_raw = str(window_str).strip()
+    
+    candidates = [
+        f"dataset_{condition}_{window_clean}.csv",
+        f"dataset_{condition}_{window_raw}.csv",
+        f"dataset_{condition}_{window_raw.replace('ms', '')}.csv",
+        f"dataset_{condition}.csv"
+    ]
+    
+    search_dirs = [input_dir, ".", "/workspace/scratch", "/workspace/knowledge", "/workspace/artifacts"]
+    for d in search_dirs:
+        if not os.path.exists(d):
+            continue
+        for cand in candidates:
+            p = os.path.join(d, cand)
+            if os.path.exists(p):
+                return p
+    return None
 
-print("BASE_DIR:", BASE_DIR)
-print("OUTPUT_DIR:", OUTPUT_DIR)
-print("N_SPLITS:", N_SPLITS)
-print("SURVIVAL_THRESHOLD:", SURVIVAL_THRESHOLD)
+def resolve_target_and_data(df, task_name):
+    """Dynamically creates target vector 'y' for each active task target."""
+    df_task = df.copy().drop_duplicates(subset=["participant_id"])
+    
+    # 1. Age_Group
+    if task_name == "Age_Group":
+        if "age_group" in df_task.columns:
+            df_task = df_task.dropna(subset=["age_group"])
+            return df_task, df_task["age_group"].values
+            
+    # 2. Language_Tonal
+    elif task_name == "Language_Tonal":
+        if "lang_tonal" in df_task.columns:
+            df_task = df_task.dropna(subset=["lang_tonal"])
+            return df_task, df_task["lang_tonal"].values
+        elif "lang" in df_task.columns:
+            df_task = df_task.dropna(subset=["lang"])
+            df_task["lang_tonal"] = df_task["lang"].apply(lambda x: "C" if str(x).upper() == "C" else "NC")
+            return df_task, df_task["lang_tonal"].values
+            
+    # 3. Language
+    elif task_name == "Language":
+        if "lang" in df_task.columns:
+            df_task = df_task.dropna(subset=["lang"])
+            return df_task, df_task["lang"].values
+            
+    # 4. Age_Child_Language_Tonal
+    elif task_name == "Age_Child_Language_Tonal":
+        if "age_group" in df_task.columns and ("lang" in df_task.columns or "lang_tonal" in df_task.columns):
+            df_task = df_task[df_task["age_group"].isin(["5-7", "8-12"])]
+            if "lang_tonal" not in df_task.columns:
+                df_task["lang_tonal"] = df_task["lang"].apply(lambda x: "C" if str(x).upper() == "C" else "NC")
+            df_task["target"] = df_task["age_group"].astype(str) + "_" + df_task["lang_tonal"].astype(str)
+            df_task = df_task.dropna(subset=["target"])
+            return df_task, df_task["target"].values
+            
+    # 5. Age_Child_Language
+    elif task_name == "Age_Child_Language":
+        if "age_group" in df_task.columns and "lang" in df_task.columns:
+            df_task = df_task[df_task["age_group"].isin(["5-7", "8-12"])]
+            df_task["target"] = df_task["age_group"].astype(str) + "_" + df_task["lang"].astype(str)
+            df_task = df_task.dropna(subset=["target"])
+            return df_task, df_task["target"].values
+            
+    # Fallbacks for raw columns
+    for col in [task_name, task_name.lower(), "target", "interaction_child_lang2", "interaction_child_lang4"]:
+        if col in df_task.columns:
+            df_task = df_task.dropna(subset=[col])
+            return df_task, df_task[col].values
+            
+    return None, None
 
-
-# ============================================================
-# 2. Feature helpers
-# ============================================================
-
-def get_feature_cols(df, band):
-    if band == "all":
-        prefixes = ("delta_", "theta_", "alpha_", "beta_", "highbeta_", "gamma_")
-        return [col for col in df.columns if col.startswith(prefixes)]
-
-    prefix = f"{band}_"
-    return [col for col in df.columns if col.startswith(prefix)]
-
-
-def parse_feature_name(feature_name):
-    """
-    Example:
-    alpha_ACtL_FR -> band=alpha, ch1=ACtL, ch2=FR
-    """
-    parts = feature_name.split("_")
-
-    if len(parts) < 3:
-        return {
-            "feature_band": None,
-            "channel_1": None,
-            "channel_2": None,
-            "channel_pair": None,
-        }
-
-    feature_band = parts[0]
-    channel_1 = parts[1]
-    channel_2 = parts[2]
-    channel_pair = f"{channel_1}-{channel_2}"
-
-    return {
-        "feature_band": feature_band,
-        "channel_1": channel_1,
-        "channel_2": channel_2,
-        "channel_pair": channel_pair,
-    }
-
-
-# ============================================================
-# 3. Prepare task data
-# ============================================================
-
-def prepare_binary_task(condition, task_name, label_col, positive_label, negative_label, band):
-    dataset_path = OUTPUT_DIR / f"dataset_{condition}.csv"
-
-    if not dataset_path.exists():
-        raise FileNotFoundError(f"Cannot find dataset: {dataset_path}")
-
-    df = pd.read_csv(dataset_path)
-
-    if task_name == "language_C_vs_Others":
-        df = df[df["lang"].notna()].copy()
-        df["lang_binary_task"] = df["lang"].apply(
-            lambda x: "Mandarin" if x == "Mandarin" else "Others"
-        )
-        label_col = "lang_binary_task"
-
-    task_df = df[df[label_col].isin([positive_label, negative_label])].copy()
-
-    task_df["binary_y"] = task_df[label_col].apply(
-        lambda x: 1 if x == positive_label else 0
-    )
-
-    feature_cols = get_feature_cols(task_df, band)
-
-    if len(feature_cols) == 0:
-        raise ValueError(f"No feature columns found for band: {band}")
-
-    X = task_df[feature_cols].copy()
-    y = task_df["binary_y"].astype(int).to_numpy()
-
-    print("\n" + "=" * 90)
-    print("Task:", task_name)
-    print("Condition:", condition)
-    print("Band:", band)
-    print("Positive label:", positive_label)
-    print("Negative label:", negative_label)
-    print("Dataset shape:", task_df.shape)
-    print("X shape:", X.shape)
-    print("Class counts:")
-    print(task_df[label_col].value_counts(dropna=False))
-    print("=" * 90)
-
-    return X, y, task_df, feature_cols
-
-
-# ============================================================
-# 4. ElasticNet survived features
-# ============================================================
-
-def run_elasticnet_survived_features(task_config):
-    condition = task_config["condition"]
-    task_name = task_config["task_name"]
-    label_col = task_config["label_col"]
-    positive_label = task_config["positive_label"]
-    negative_label = task_config["negative_label"]
-    band = task_config["band"]
-
-    X, y, task_df, feature_cols = prepare_binary_task(
-        condition=condition,
-        task_name=task_name,
-        label_col=label_col,
-        positive_label=positive_label,
-        negative_label=negative_label,
-        band=band
-    )
-
-    min_class_count = min(np.sum(y == 0), np.sum(y == 1))
-    n_splits = min(N_SPLITS, int(min_class_count))
-
-    if n_splits < 2:
-        raise ValueError("Not enough samples for cross-validation.")
-
-    cv = StratifiedKFold(
-        n_splits=n_splits,
-        shuffle=True,
-        random_state=RANDOM_STATE
-    )
-
-    coef_records = []
-
-    for fold_idx, (train_idx, test_idx) in enumerate(cv.split(X, y), start=1):
-        print(f"\nTraining fold {fold_idx}/{n_splits}...")
-
-        X_train = X.iloc[train_idx]
-        y_train = y[train_idx]
-
-        model = Pipeline([
-            ("scaler", StandardScaler()),
-            ("model", LogisticRegression(
-                penalty="elasticnet",
-                solver="saga",
-                l1_ratio=0.5,
-                C=1.0,
-                class_weight="balanced",
-                max_iter=20000,
-                random_state=RANDOM_STATE + fold_idx
-            ))
-        ])
-
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            model.fit(X_train, y_train)
-
-        coefs = model.named_steps["model"].coef_[0]
-
-        fold_df = pd.DataFrame({
-            "task": task_name,
-            "condition": condition,
-            "band": band,
-            "model": "ElasticNet",
-            "fold": fold_idx,
-            "feature": feature_cols,
-            "coefficient": coefs,
-            "abs_coefficient": np.abs(coefs),
-            "selected": coefs != 0,
-        })
-
-        coef_records.append(fold_df)
-
-        print("Selected features in this fold:", int((coefs != 0).sum()))
-
-    coef_all = pd.concat(coef_records, ignore_index=True)
-
-    # Save all fold coefficients
-    safe_task_name = f"{task_name}_{condition}_{band}_ElasticNet"
-    all_coef_path = OUTPUT_DIR / f"elasticnet_all_fold_coefficients_{safe_task_name}.csv"
-    coef_all.to_csv(all_coef_path, index=False)
-
-    # Summarise by feature
-    summary = (
-        coef_all
-        .groupby(["task", "condition", "band", "model", "feature"], as_index=False)
-        .agg(
-            survival_count=("selected", "sum"),
-            mean_coefficient=("coefficient", "mean"),
-            median_coefficient=("coefficient", "median"),
-            mean_abs_coefficient=("abs_coefficient", "mean"),
-            max_abs_coefficient=("abs_coefficient", "max"),
-        )
-    )
-
-    summary["n_folds"] = n_splits
-    summary["survival_rate"] = summary["survival_count"] / n_splits
-
-    # Direction based on mean coefficient
-    # Positive coefficient means stronger association with positive class
-    summary["direction"] = np.where(
-        summary["mean_coefficient"] > 0,
-        f"towards_{positive_label}",
-        np.where(
-            summary["mean_coefficient"] < 0,
-            f"towards_{negative_label}",
-            "zero"
-        )
-    )
-
-    parsed = summary["feature"].apply(parse_feature_name).apply(pd.Series)
-    summary = pd.concat([summary, parsed], axis=1)
-
-    summary = summary.sort_values(
-        by=["survival_count", "mean_abs_coefficient"],
-        ascending=[False, False]
-    ).reset_index(drop=True)
-
-    survived = summary[summary["survival_count"] >= SURVIVAL_THRESHOLD].copy()
-
-    summary_path = OUTPUT_DIR / f"elasticnet_feature_summary_{safe_task_name}.csv"
-    survived_path = OUTPUT_DIR / f"survived_features_{safe_task_name}.csv"
-
-    summary.to_csv(summary_path, index=False)
-    survived.to_csv(survived_path, index=False)
-
-    print("\nSaved all fold coefficients to:")
-    print(all_coef_path)
-
-    print("\nSaved full feature summary to:")
-    print(summary_path)
-
-    print("\nSaved survived features to:")
-    print(survived_path)
-
-    print("\nTop 20 features:")
-    print(summary[[
-        "feature",
-        "channel_pair",
-        "survival_count",
-        "survival_rate",
-        "mean_coefficient",
-        "mean_abs_coefficient",
-        "direction"
-    ]].head(20))
-
-    print("\nSurvived features:")
-    if survived.empty:
-        print("No features survived the threshold.")
+def get_features_for_band_and_mode(df, band, mode):
+    """Filters feature columns based on frequency band and feature mode (PSD vs. FC)."""
+    meta_cols = ["participant_id", "filename", "condition", "lang", "age_group", "file_name", 
+                 "LookupLang", "LookupAgeGroup", "lang_tonal", "target", "interaction_child_lang2", 
+                 "interaction_child_lang4", "window", "start_time", "end_time"]
+    candidate_cols = [c for c in df.columns if c not in meta_cols]
+    
+    # Filter by band
+    if str(band).lower() != "all":
+        band_cols = [c for c in candidate_cols if c.startswith(f"{band}_") or f"_{band}_" in c or c.endswith(f"_{band}") or f"psd_{band}" in c.lower()]
     else:
-        print(survived[[
-            "feature",
-            "channel_pair",
-            "survival_count",
-            "survival_rate",
-            "mean_coefficient",
-            "mean_abs_coefficient",
-            "direction"
-        ]])
+        band_cols = candidate_cols
+        
+    if not band_cols:
+        band_cols = candidate_cols
+        
+    mode_str = str(mode).upper() if mode else "ALL"
+    
+    if mode_str == "PSD":
+        psd_cols = [c for c in band_cols if "psd" in c.lower() or len(c.split("_")) <= 2]
+        return psd_cols if psd_cols else band_cols
+    elif mode_str == "FC":
+        fc_cols = [c for c in band_cols if "psd" not in c.lower() and len(c.split("_")) >= 3]
+        return fc_cols if fc_cols else band_cols
+    else:  # PSD_FC or ALL
+        return band_cols
 
-    return {
-        "task": task_name,
-        "condition": condition,
-        "band": band,
-        "model": "ElasticNet",
-        "n_samples": len(y),
-        "n_positive": int(np.sum(y == 1)),
-        "n_negative": int(np.sum(y == 0)),
-        "n_features": X.shape[1],
-        "n_folds": n_splits,
-        "survival_threshold": SURVIVAL_THRESHOLD,
-        "n_survived_features": survived.shape[0],
-        "summary_path": str(summary_path),
-        "survived_path": str(survived_path),
-    }
+def extract_channel_descriptor(col_name):
+    """Extracts channel or channel-pair label from feature name."""
+    parts = col_name.split("_")
+    if len(parts) >= 3:
+        return f"{parts[1]}-{parts[2]}"
+    elif len(parts) == 2:
+        return parts[1]
+    return col_name
 
+def main():
+    print("=== Step 4: Multi-Task Elastic Net Survived-Feature Analysis ===")
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    
+    best_results_path = os.path.join(OUTPUT_DIR, "multiclass_best_results_all_conditions.csv")
+    if not os.path.exists(best_results_path):
+        best_results_path = os.path.join(OUTPUT_DIR, "multiclass_best_overall_by_task.csv")
+        
+    if os.path.exists(best_results_path):
+        best_df = pd.read_csv(best_results_path)
+        print(f"Loaded peak configurations from: {best_results_path}")
+    else:
+        print("Warning: No precomputed best results file found. Using default peak baseline configurations.")
+        default_configs = [
+            {"Task": "Age_Group", "Condition": "gu2", "Window": "0-800ms", "Band": "beta", "Feature_Mode": "PSD", "Model": "Elastic Net"},
+            {"Task": "Language_Tonal", "Condition": "gu2", "Window": "400-800ms", "Band": "delta", "Feature_Mode": "FC", "Model": "Elastic Net"},
+            {"Task": "Language", "Condition": "gu2", "Window": "0-300ms", "Band": "all", "Feature_Mode": "PSD_FC", "Model": "Elastic Net"},
+            {"Task": "Age_Child_Language_Tonal", "Condition": "gu1", "Window": "300-600ms", "Band": "delta", "Feature_Mode": "PSD", "Model": "Elastic Net"},
+            {"Task": "Age_Child_Language", "Condition": "gu3", "Window": "300-600ms", "Band": "delta", "Feature_Mode": "PSD", "Model": "Elastic Net"}
+        ]
+        best_df = pd.DataFrame(default_configs)
+        
+    all_tasks_summaries = []
+    
+    for idx, row in best_df.iterrows():
+        task = row.get("Task", "Age_Group")
+        condition = row.get("Condition", "gu1")
+        window_str = row.get("Window", "0-800ms")
+        band = row.get("Band", "delta")
+        feature_mode = row.get("Feature_Mode", row.get("Mode", "PSD_FC"))
+        
+        file_path = resolve_dataset_path(INPUT_DIR, condition, window_str)
+        if not file_path or not os.path.exists(file_path):
+            print(f"Warning: Dataset for Condition={condition}, Window={window_str} not found. Skipping Task={task}.")
+            continue
+            
+        df_raw = pd.read_csv(file_path)
+        df_task, y = resolve_target_and_data(df_raw, task)
+        
+        if df_task is None or y is None or len(np.unique(y)) < 2:
+            print(f"Warning: Insufficient class labels for Task='{task}' in {file_path}. Skipping.")
+            continue
+            
+        classes = sorted(list(np.unique(y)))
+        n_classes = len(classes)
+        
+        feature_cols = get_features_for_band_and_mode(df_task, band, feature_mode)
+        if not feature_cols:
+            print(f"Skipping Task: {task} | Band: {band} | Mode: {feature_mode} (No feature columns)")
+            continue
+            
+        X = df_task[feature_cols].values
+        n_features = len(feature_cols)
+        
+        print(f"\nAnalyzing Survived Features: Task={task:25} | Cond={condition} | Window={window_str:10} | Band={band:6} | Mode={feature_mode}")
+        print(f"  - Target Classes ({n_classes}): {classes} | Total Input Features={n_features}")
+        
+        class_counts = pd.Series(y).value_counts()
+        min_samples = class_counts.min()
+        n_splits = min(5, min_samples)
+        
+        if n_splits < 2:
+            print(f"  - Skipping: min samples per class ({min_samples}) < 2 for cross-validation.")
+            continue
+            
+        skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
+        
+        # Configure Elastic Net Classifier
+        model = LogisticRegression(
+            penalty="elasticnet",
+            solver="saga",
+            l1_ratio=0.5,
+            C=1.0,
+            class_weight="balanced",
+            max_iter=20000,
+            random_state=42
+        )
+        
+        # Matrix shape: (n_splits, n_classes if n_classes > 2 else 1, n_features)
+        if n_classes > 2:
+            fold_coefficients = np.zeros((n_splits, n_classes, n_features))
+        else:
+            fold_coefficients = np.zeros((n_splits, 1, n_features))
+            
+        for fold_idx, (train_index, test_index) in enumerate(skf.split(X, y)):
+            X_train, y_train = X[train_index], y[train_index]
+            scaler = StandardScaler()
+            X_train_scaled = scaler.fit_transform(X_train)
+            
+            model.fit(X_train_scaled, y_train)
+            
+            if n_classes > 2:
+                fold_coefficients[fold_idx, :, :] = model.coef_
+            else:
+                fold_coefficients[fold_idx, 0, :] = model.coef_[0]
+                
+        # Evaluate feature survival per class
+        if n_classes > 2:
+            target_eval_classes = list(enumerate(classes))
+        else:
+            target_eval_classes = [(0, f"{classes[1]}_vs_{classes[0]}")]
+            
+        for c_idx, cls_label in target_eval_classes:
+            cls_coefs = fold_coefficients[:, c_idx, :]  # Shape: (n_splits, n_features)
+            
+            selection_mask = (cls_coefs != 0)
+            survival_counts = selection_mask.sum(axis=0)
+            survival_rate = survival_counts / float(n_splits)
+            
+            summary_df = pd.DataFrame({
+                "Task": task,
+                "feature": feature_cols,
+                "descriptor": [extract_channel_descriptor(col) for col in feature_cols],
+                "condition": condition,
+                "window": window_str,
+                "band": band,
+                "feature_mode": feature_mode,
+                "target_class": cls_label,
+                "survival_count": survival_counts,
+                "survival_rate": survival_rate,
+                "mean_coefficient": cls_coefs.mean(axis=0),
+                "mean_abs_coefficient": np.abs(cls_coefs).mean(axis=0),
+                "direction": np.where(cls_coefs.mean(axis=0) > 0, f"towards_{cls_label}", "towards_others")
+            })
+            
+            # Filter survived features (survival rate >= 80%, i.e. >= 4 out of 5 folds)
+            threshold_count = max(1, int(round(0.8 * n_splits)))
+            survived_df = summary_df[summary_df["survival_count"] >= threshold_count].copy()
+            survived_df = survived_df.sort_values(by="mean_abs_coefficient", ascending=False)
+            
+            print(f"  ✓ Target Class '{cls_label}': {len(survived_df)} survived features (>= {threshold_count}/{n_splits} folds)")
+            
+            cls_safe_name = str(cls_label).replace("/", "_").replace(" ", "_")
+            individual_path = os.path.join(OUTPUT_DIR, f"multiclass_survived_features_{task}_{condition}_{cls_safe_name}.csv")
+            survived_df.to_csv(individual_path, index=False)
+            
+            all_tasks_summaries.append(survived_df)
+            
+    if all_tasks_summaries:
+        task_summary_df = pd.concat(all_tasks_summaries, ignore_index=True)
+        task_summary_path = os.path.join(OUTPUT_DIR, "multiclass_survived_features_task_summary.csv")
+        task_summary_df.to_csv(task_summary_path, index=False)
+        print(f"\n✓ Saved consolidated task summary ({len(task_summary_df)} rows) to: '{task_summary_path}'")
+    else:
+        print("\nNo survived features extracted across specified models.")
 
-# ============================================================
-# 5. Task configs
-# ============================================================
-
-task_configs = [
-    {
-        "task_name": "language_C_vs_Others",
-        "condition": "gu2",
-        "band": "alpha",
-        "label_col": "lang_binary_task",
-        "positive_label": "Mandarin",
-        "negative_label": "Others",
-    },
-    {
-        "task_name": "age_8-12_vs_5-7",
-        "condition": "gu2",
-        "band": "alpha",
-        "label_col": "age_group",
-        "positive_label": "8-12",
-        "negative_label": "5-7",
-    },
-]
-
-
-# ============================================================
-# 6. Run all tasks
-# ============================================================
-
-task_summaries = []
-
-for config in task_configs:
-    task_summary = run_elasticnet_survived_features(config)
-    task_summaries.append(task_summary)
-
-task_summary_df = pd.DataFrame(task_summaries)
-
-task_summary_path = OUTPUT_DIR / "survived_features_task_summary.csv"
-task_summary_df.to_csv(task_summary_path, index=False)
-
-print("\n" + "=" * 90)
-print("All survived-feature analyses completed.")
-print("Saved task summary to:")
-print(task_summary_path)
-print("=" * 90)
-
-print("\nTask summary:")
-print(task_summary_df)
+if __name__ == "__main__":
+    main()

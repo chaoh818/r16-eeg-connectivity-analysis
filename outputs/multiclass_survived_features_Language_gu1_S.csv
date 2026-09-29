@@ -1,0 +1,3 @@
+Task,feature,descriptor,condition,window,band,feature_mode,target_class,survival_count,survival_rate,mean_coefficient,mean_abs_coefficient,direction
+Language,delta_ACtL_ACrL,ACtL-ACrL,gu1,400-800ms,delta,PSD,S,4,0.8,0.1757114685058647,0.1757114685058647,towards_S
+Language,delta_ACtR_ACaR,ACtR-ACaR,gu1,400-800ms,delta,PSD,S,4,0.8,-0.17187910821112307,0.17187910821112307,towards_others

@@ -1,0 +1,2 @@
+Task,feature,descriptor,condition,window,band,feature_mode,target_class,survival_count,survival_rate,mean_coefficient,mean_abs_coefficient,direction
+Language,alpha_ACtR_ACaR,ACtR-ACaR,gu3,400-800ms,alpha,FC,C,5,1.0,0.3323917526847416,0.3323917526847416,towards_C

@@ -1,0 +1,2 @@
+Task,feature,descriptor,condition,window,band,feature_mode,target_class,survival_count,survival_rate,mean_coefficient,mean_abs_coefficient,direction
+Age_Child_Language_Tonal,delta_ACaL_ACaR,ACaL-ACaR,gu2,300-600ms,delta,FC,8-12_NC,5,1.0,-0.3939294584298513,0.3939294584298513,towards_others

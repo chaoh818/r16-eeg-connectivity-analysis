@@ -1,3 +1,0 @@
-task,condition,band,model,n_samples,n_positive,n_negative,n_features,n_folds,survival_threshold,n_survived_features,summary_path,survived_path
-language_C_vs_Others,gu2,alpha,ElasticNet,65,30,35,105,5,4,16,F:\code\R16_EEG_analysis\outputs\elasticnet_feature_summary_language_C_vs_Others_gu2_alpha_ElasticNet.csv,F:\code\R16_EEG_analysis\outputs\survived_features_language_C_vs_Others_gu2_alpha_ElasticNet.csv
-age_8-12_vs_5-7,gu2,alpha,ElasticNet,53,33,20,105,5,4,14,F:\code\R16_EEG_analysis\outputs\elasticnet_feature_summary_age_8-12_vs_5-7_gu2_alpha_ElasticNet.csv,F:\code\R16_EEG_analysis\outputs\survived_features_age_8-12_vs_5-7_gu2_alpha_ElasticNet.csv

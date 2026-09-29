@@ -1,0 +1,2 @@
+Task,feature,descriptor,condition,window,band,feature_mode,target_class,survival_count,survival_rate,mean_coefficient,mean_abs_coefficient,direction
+Age_Child_Language,alpha_ACtL_ACrL,ACtL-ACrL,gu1,400-800ms,alpha,FC,8-12_S,2,1.0,0.184827728630766,0.32505651066718644,towards_8-12_S

@@ -1,0 +1,3 @@
+Task,feature,descriptor,condition,window,band,feature_mode,target_class,survival_count,survival_rate,mean_coefficient,mean_abs_coefficient,direction
+Age_Group,beta_ACtR_ACrR,ACtR-ACrR,gu3,0-800ms,beta,PSD,Adult,5,1.0,-0.6073244006801343,0.6073244006801343,towards_others
+Age_Group,beta_ACtR_ACaR,ACtR-ACaR,gu3,0-800ms,beta,PSD,Adult,5,1.0,-0.4339494629632009,0.4339494629632009,towards_others

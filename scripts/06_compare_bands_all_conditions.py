@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-06_compare_bands_all_conditions_multiclass.py
+06_compare_bands_all_conditions.py
 ---------------------------------------------
 Compares multiclass and binary classification performance for EEG datasets
 combining Power Spectral Density (PSD) and Functional Connectivity (FC) features.
@@ -28,6 +28,7 @@ from sklearn.metrics import accuracy_score, roc_auc_score, confusion_matrix
 import warnings
 warnings.filterwarnings('ignore')
 from pathlib import Path
+import argparse
 
 # ============================================================
 # 1. Set paths
@@ -43,7 +44,7 @@ INPUT_DIR = OUTPUT_DIR
 base_path = Path(DATA_DIR).expanduser()
 
 CONDITIONS = ["gu1", "gu2", "gu3"]
-BANDS = ["delta", "theta", "alpha", "beta", "highbeta", "gamma", "all"]
+ALL_BANDS = ["delta", "theta", "alpha", "beta", "highbeta", "gamma"]
 FEATURE_MODES = ["FC", "PSD", "PSD_FC"]
 
 TASKS = {
@@ -54,7 +55,8 @@ TASKS = {
     "Age_Child_Language": "interaction_child_lang4"
 }
 
-ALL_BANDS = ["delta", "theta", "alpha", "beta", "highbeta", "gamma"]
+time_start_arg = 0
+time_end_arg = 1000
 
 def classify_column_type(col):
     """
@@ -186,7 +188,7 @@ def main():
     results = []
     
     for condition in CONDITIONS:
-        filename = f"dataset_{condition}.csv"
+        filename = f"dataset_{condition}_{time_start_arg}_{time_end_arg}.csv"
         file_path = os.path.join(INPUT_DIR, filename)
         
         if not os.path.exists(file_path):
@@ -212,7 +214,7 @@ def main():
             print(f"\n  Evaluating Task: {task_key} ({n_classes} classes: {classes})")
             
             for mode in FEATURE_MODES:
-                for band in BANDS:
+                for band in ALL_BANDS:
                     feature_cols = get_features_by_band_and_mode(df_task, band, mode)
                     if not feature_cols:
                         continue
@@ -296,15 +298,29 @@ def main():
                         print(f"    - Mode: {mode:6} | Band: {band:8} | Model: {model_name:13} | N_Feat: {n_features:3} | AUC = {np.mean(fold_aucs):.4f} | Acc = {np.mean(fold_accs):.4f}")
 
     results_df = pd.DataFrame(results)
-    output_path = os.path.join(OUTPUT_DIR, "multiclass_results_all_conditions.csv")
+    output_path = os.path.join(OUTPUT_DIR, f"multiclass_results_all_conditions_{time_start_arg}_{time_end_arg}.csv")
     results_df.to_csv(output_path, index=False)
     print(f"\n✓ Saved full results to: '{output_path}'")
     
     if len(results_df) > 0:
         best_overall = results_df.sort_values(by="AUC_mean", ascending=False).groupby(["Task", "Condition"]).first().reset_index()
-        best_overall_path = os.path.join(OUTPUT_DIR, "multiclass_best_results_all_conditions.csv")
+        best_overall_path = os.path.join(OUTPUT_DIR, f"multiclass_best_results_all_conditions_{time_start_arg}_{time_end_arg}.csv")
         best_overall.to_csv(best_overall_path, index=False)
         print(f"✓ Saved top model per task-condition to: '{best_overall_path}'")
 
 if __name__ == "__main__":
+    # 1. Initialize the parser
+    parser = argparse.ArgumentParser(description="Process EEG time windows.")
+
+    # 2. Define the arguments and force them to be integers
+    # Using -500 and 1000 as default fallbacks based on your standard epoch
+    parser.add_argument("--start_time", type=int, default=-500, help="Start time in milliseconds")
+    parser.add_argument("--end_time", type=int, default=1000, help="End time in milliseconds")
+
+    # 3. Parse the arguments from the command line
+    args = parser.parse_args()
+
+    # 4. Access the variables (they are already converted to integers)
+    time_start_arg = args.start_time
+    time_end_arg = args.end_time
     main()

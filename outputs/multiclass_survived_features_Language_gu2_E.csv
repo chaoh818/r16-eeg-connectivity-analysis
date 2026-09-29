@@ -1,0 +1,4 @@
+Task,feature,descriptor,condition,window,band,feature_mode,target_class,survival_count,survival_rate,mean_coefficient,mean_abs_coefficient,direction
+Language,theta_ACaL_ACaR,ACaL-ACaR,gu2,0-300ms,theta,PSD,E,5,1.0,0.3980157862341619,0.3980157862341619,towards_E
+Language,theta_ACtL_ACaR,ACtL-ACaR,gu2,0-300ms,theta,PSD,E,4,0.8,-0.33625513243584393,0.33625513243584393,towards_others
+Language,theta_ACtL_ACaL,ACtL-ACaL,gu2,0-300ms,theta,PSD,E,5,1.0,-0.19903808014582242,0.19903808014582242,towards_others

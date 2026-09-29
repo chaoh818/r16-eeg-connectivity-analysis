@@ -1,0 +1,4 @@
+Task,feature,descriptor,condition,window,band,feature_mode,target_class,survival_count,survival_rate,mean_coefficient,mean_abs_coefficient,direction
+Language_Tonal,alpha_ACrR_ACaR,ACrR-ACaR,gu1,0-300ms,alpha,PSD,NC_vs_C,5,1.0,0.19633720333421453,0.22848225627063345,towards_NC_vs_C
+Language_Tonal,alpha_ACtL_ACaL,ACtL-ACaL,gu1,0-300ms,alpha,PSD,NC_vs_C,4,0.8,-0.19044148834518132,0.19044148834518132,towards_others
+Language_Tonal,alpha_ACrL_ACaL,ACrL-ACaL,gu1,0-300ms,alpha,PSD,NC_vs_C,4,0.8,-0.03835937424254373,0.13796442348223675,towards_others

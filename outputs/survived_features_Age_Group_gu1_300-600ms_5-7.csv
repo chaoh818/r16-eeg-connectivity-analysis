@@ -1,0 +1,2 @@
+Task,Condition,Window,Band,Feature_Mode,Target_Class,Feature,Channel_Pair,Survival_Count,Survival_Rate,Mean_Coefficient,Mean_Abs_Coefficient,Direction
+Age_Group,gu1,300-600ms,theta,PSD_FC,5-7,theta_ACtL_ACrL,ACtL-ACrL,5,1.0,0.2968648706043683,0.2968648706043683,towards_5-7
